@@ -6,6 +6,8 @@
 namespace chongming::qualifier {
 namespace {
 
+constexpr double kEpsilon = 1e-8;
+
 double clamp01(double value) {
     return std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0;
 }
@@ -39,15 +41,23 @@ JuryEvaluation Jury::deliberate(
 
     const double total = votes[0] + votes[1] + votes[2];
     if (total <= 0.0) {
-        // Z_i=0 时各评分保持 nullopt，并通过标志位交由后续安全策略处理。
+        // 规范要求零票重使用中性真实性方向，但明确标记为缺失。
+        result.direction = 0.0;
+        result.consensus_score = 0.0;
+        result.jury_score = 0.5;
         return result;
     }
     result.has_valid_votes = true;
+    result.jury_missing = false;
     std::array<double, 3> distribution{{0.0, 0.0, 0.0}};
     for (std::size_t i = 0; i < votes.size(); ++i) {
         distribution[i] = votes[i] / total;
     }
     result.vote_distribution = distribution;
+    // D_jury=(V_support-V_refute)/(V_total+epsilon)。未知票只进入分母，
+    // 因此会稀释净方向，但不会把真实性向支持或反驳方向推动。
+    result.direction = std::clamp(
+        (votes[0] - votes[1]) / (total + kEpsilon), -1.0, 1.0);
 
     double entropy = 0.0;
     for (double probability : distribution) {
@@ -59,10 +69,11 @@ JuryEvaluation Jury::deliberate(
     result.consensus_score =
         clamp01(1.0 - entropy / std::log2(3.0));
     result.uncertain_vote_share = distribution[2];
-    // 效用权重：支持=1、反驳=0、不确定=0.5。
-    const double utility = distribution[0] + 0.5 * distribution[2];
-    result.jury_score =
-        clamp01(result.consensus_score.value_or(0.0) * utility);
+    // S_jury=0.5+0.5*D_jury*C。反驳票会降低分数；全未知时 D=0，
+    // 无论未知票内部多一致，真实性分数始终保持中性 0.5。
+    result.jury_score = clamp01(
+        0.5 + 0.5 * result.direction.value() *
+                  result.consensus_score.value());
     return result;
 }
 

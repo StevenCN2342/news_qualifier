@@ -21,14 +21,23 @@ struct ClaimJuryOpinions {
 /**
  * news_qualifier 子进程的一次完整输入。
  *
- * JSON 协议使用稳定的 claim id；JsonReader 会在读取关系时把 id 转换为
- * RelationInput 所需的 claims 数组下标。当前只接受 schemaVersion=1。
+ * JSON 协议使用稳定的 claim id；JsonReader 会在读取逻辑边时把 id 转换为
+ * 算法所需的 claims 数组下标。当前只接受预处理 agent 输出的 schema_version=3。
  */
 struct QualifierRequest {
     std::int64_t schema_version{0};
     std::string request_id;
+    std::string event_id;
+    std::string original_text;
+    std::string source;
+    std::string publish_date;
+    std::string event_nature;
+    std::string domain;
+    std::string event_time;
+    SevenElements seven_elements;
     std::vector<AtomicClaim> claims;
     std::vector<RelationInput> relations;
+    std::vector<AggregationInput> aggregations;
     std::vector<ClaimJuryOpinions> jury_opinions;
 };
 

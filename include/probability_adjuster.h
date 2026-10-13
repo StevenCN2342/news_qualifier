@@ -1,49 +1,63 @@
 #pragma once
 
+#include "qualifier_types.h"
+
 #include <cstddef>
 #include <optional>
 #include <vector>
 
+#define PROBABILITY_ADJUSTER_TEMPERATURE 1.0
+#define PROBABILITY_ADJUSTER_MIN_TEMPERATURE 0.1
+#define PROBABILITY_ADJUSTER_MAX_TEMPERATURE 5.0
+#define PROBABILITY_ADJUSTER_EPSILON 1e-8
+#define PROBABILITY_ADJUSTER_ECE_BIN_COUNT 10U
+
 namespace chongming::qualifier {
 
-/** 第六层温度缩放参数。temperature 应由验证集学习后传入。 */
+/** 第六层四类温度缩放配置；temperature 应在 fit 的折外预测上拟合。 */
 struct ProbabilityAdjusterConfig {
-    double temperature{1.0};
-    double epsilon{1e-8};
+    double temperature{PROBABILITY_ADJUSTER_TEMPERATURE};
+    double epsilon{PROBABILITY_ADJUSTER_EPSILON};
 };
 
-/** ECE 的一条验证样本：预测概率以及该预测最终是否正确。 */
-struct CalibrationObservation {
-    double probability{0.0};
-    bool correct{false};
+/** 用于报告四类概率校准指标的一条已标注观测。 */
+struct MulticlassCalibrationObservation {
+    FourClassProbabilities probabilities;
+    CredibilityLabel true_label{CredibilityLabel::InsufficientInformation};
+};
+
+/** 优化规范要求报告的概率质量指标。 */
+struct MulticlassCalibrationMetrics {
+    std::optional<double> macro_negative_log_likelihood;
+    std::optional<double> brier_score;
+    std::optional<double> expected_calibration_error;
 };
 
 /**
- * 使用温度缩放校准 MCScore，并计算预期校准误差（ECE）。
- * 本类不训练温度参数，只使用外部验证流程已经确定的 temperature。
+ * 将第五层结果映射为 T/M/I/F 四类质量，并执行多类温度缩放。
+ * 本类不拟合 temperature，只使用 fit 流程已经冻结的配置。
  */
 class ProbabilityAdjuster {
 public:
-    /** temperature<=0 或 epsilon 不在 (0,0.5) 时抛出 std::invalid_argument。 */
+    /** temperature 不在 [0.1,5.0] 或 epsilon 不在 (0,0.25) 时抛出异常。 */
     explicit ProbabilityAdjuster(
         ProbabilityAdjusterConfig config = ProbabilityAdjusterConfig{});
 
     /**
-     * 按 sigmoid(logit(clip(mc_score))/temperature) 返回校准概率。
-     * mc_score 必须位于 [0,1]，否则抛出 std::invalid_argument。
+     * 计算单条声明的四类概率。前层必要字段未定义时返回 nullopt。
+     * 无逻辑边时按规范使用中性 L_i=0.5，但不改写第五层的 logic=nullopt。
      */
-    double calibrate(double mc_score) const;
-
-    /** 未计算出 MCScore 时传播 nullopt；有值时与 double 重载行为一致。 */
-    std::optional<double> calibrate(std::optional<double> mc_score) const;
+    std::optional<ProbabilityEvaluation> evaluate(
+        const ClaimEvaluation& claim,
+        const ClaimMultiDimensionalEvaluation& multi_dimensional) const;
 
     /**
-     * 使用等宽置信度分箱计算 ECE。空验证集没有定义，返回 nullopt；
-     * bin_count 必须大于 0。
+     * 计算 Macro-NLL、四类 Brier score 与基于最大类置信度的 ECE。
+     * Macro-NLL 只有在四个真值类别均有样本时才定义。
      */
-    std::optional<double> expectedCalibrationError(
-        const std::vector<CalibrationObservation>& observations,
-        std::size_t bin_count = 10) const;
+    MulticlassCalibrationMetrics metrics(
+        const std::vector<MulticlassCalibrationObservation>& observations,
+        std::size_t bin_count = PROBABILITY_ADJUSTER_ECE_BIN_COUNT) const;
 
 private:
     ProbabilityAdjusterConfig config_;

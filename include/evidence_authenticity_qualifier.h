@@ -4,14 +4,26 @@
 
 #include <unordered_map>
 
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_TIME_DECAY_PER_DAY 0.01
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_SUFFICIENCY_GAMMA 0.50
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_REFERENCE_CLUSTER_COUNT 3.0
+
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_OFFICIAL_REGISTRY 0.90
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_ACADEMIC 0.88
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_OPEN_WEB 0.72
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_SOCIAL_MEDIA 0.72
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_NEWS_MEDIA 0.68
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_VIDEO_OR_GITHUB 0.65
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_MARKET_DATA 0.60
+
 namespace chongming::qualifier {
 
 /** 第一、二步的可调参数以及来源可靠性基线表。 */
 struct EvidenceAuthenticityConfig {
-    double relevance_threshold{0.20};
-    double time_decay_per_day{0.01};
-    double sufficiency_gamma{0.50};
-    double sufficiency_threshold{0.30};
+    double time_decay_per_day{EVIDENCE_AUTHENTICITY_QUALIFIER_TIME_DECAY_PER_DAY};
+    double sufficiency_gamma{EVIDENCE_AUTHENTICITY_QUALIFIER_SUFFICIENCY_GAMMA};
+    double reference_cluster_count{
+        EVIDENCE_AUTHENTICITY_QUALIFIER_REFERENCE_CLUSTER_COUNT};
     std::unordered_map<SourceType, double> source_baselines;
 
     EvidenceAuthenticityConfig();
@@ -30,13 +42,14 @@ public:
     std::vector<EvidenceAssessment> assess(const AtomicClaim& claim) const;
 
     /**
-     * 按 1-exp(-gamma*sum(delta*r)) 计算充分性。
-     * 低于相关性阈值的证据不参与求和；中立 NLI 证据按 README 原公式参与。
+     * 将逐条证据评估合并为来源簇；每簇的支持、反驳和中立分别取最大值。
      */
-    double sufficiencyScore(const std::vector<EvidenceAssessment>& assessments) const;
+    std::vector<EvidenceClusterAssessment> summarizeClusters(
+        const std::vector<EvidenceAssessment>& assessments) const;
 
-    /** 返回用于标记“信息不足”的充分性阈值。 */
-    double sufficiencyThreshold() const noexcept;
+    /** 按 1-exp(-gamma/kappa*sum(max(s_g,r_g,n_g))) 计算充分性。 */
+    double sufficiencyScore(
+        const std::vector<EvidenceClusterAssessment>& clusters) const;
 
 private:
     EvidenceAuthenticityConfig config_;

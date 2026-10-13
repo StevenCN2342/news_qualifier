@@ -2,30 +2,44 @@
 
 #include "qualifier_types.h"
 
+#define MULTI_DIMENSIONAL_QUALIFIER_CONTENT_WEIGHT 0.20
+#define MULTI_DIMENSIONAL_QUALIFIER_LOGIC_WEIGHT 0.20
+#define MULTI_DIMENSIONAL_QUALIFIER_SUFFICIENCY_WEIGHT 0.20
+#define MULTI_DIMENSIONAL_QUALIFIER_JURY_WEIGHT 0.20
+#define MULTI_DIMENSIONAL_QUALIFIER_SOURCE_WEIGHT 0.20
+
 namespace chongming::qualifier {
 
-/** 第五步 MCScore 的四项权重；四项之和必须为 1。 */
+/**
+ * 第五层 MC_i 的五项权重配置。
+ *
+ * 五项之和必须为 1，logic_weight 还必须不大于 0.8，以保证没有逻辑边时
+ * 删除逻辑项后分母仍为正。这里的等权默认值只是 fit 前的合法初值，最终值
+ * 应由训练/验证流程冻结后传入。
+ */
 struct MultiDimensionalConfig {
-    double content_weight{0.35};
-    double logic_weight{0.25};
-    double sufficiency_weight{0.20};
-    double source_quality_weight{0.20};
+    double content_weight{MULTI_DIMENSIONAL_QUALIFIER_CONTENT_WEIGHT};
+    double logic_weight{MULTI_DIMENSIONAL_QUALIFIER_LOGIC_WEIGHT};
+    double sufficiency_weight{MULTI_DIMENSIONAL_QUALIFIER_SUFFICIENCY_WEIGHT};
+    double jury_weight{MULTI_DIMENSIONAL_QUALIFIER_JURY_WEIGHT};
+    double source_weight{MULTI_DIMENSIONAL_QUALIFIER_SOURCE_WEIGHT};
 };
 
-/** 汇总前四步结果并输出可解释维度、MCScore 和四级标签。 */
+/** 汇总前四层结果，输出逐声明可解释维度和 MC_i；标签留给第六层。 */
 class MultiDimensionalQualifier {
 public:
-    /** 权重为负、非有限数或总和不为 1 时抛出 std::invalid_argument。 */
+    /** 权重非法、总和不为 1 或 logic_weight>0.8 时抛出 std::invalid_argument。 */
     explicit MultiDimensionalQualifier(
         MultiDimensionalConfig config = MultiDimensionalConfig{});
 
     /**
-     * jury_results 按下标与 claims 对齐；缺失或无效的陪审团结果按零一致性处理。
-     * 执行后所有维度和 MCScore 均有值：空方向集合回退为 0.5，空质量集合回退为 0。
+     * claim_logic_results 使用第三层 aggregateByClaim 的输出；jury_results 按
+     * claim 下标对齐。无逻辑边时删除逻辑项并重新归一化权重；无陪审团输出
+     * 时按第四层边界规则使用 jury=0.5、consensus=0。
      */
     MultiDimensionalEvaluation evaluate(
         const std::vector<ClaimEvaluation>& claims,
-        const std::vector<LogicEvaluation>& relations,
+        const std::vector<ClaimLogicEvaluation>& claim_logic_results,
         const std::vector<JuryEvaluation>& jury_results) const;
 
 private:

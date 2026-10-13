@@ -1,0 +1,48 @@
+{
+  "model_version": "smoke-test-finite-unvalidated",
+  "algorithm_version": "mc-score-optimized-v1",
+  "input_schema_version": 3,
+  "calibration_status": "unvalidated",
+  "optimized_parameters": {
+    "sigmoid_alpha": 4.0,
+    "sufficiency_gamma": 0.5,
+    "causal_weights": {
+      "time": 0.2,
+      "mechanism": 0.2,
+      "counterfactual": 0.2,
+      "confounder": 0.2,
+      "dose_response": 0.2
+    },
+    "aggregation_weights": {
+      "content": 0.2,
+      "logic": 0.2,
+      "sufficiency": 0.2,
+      "jury": 0.2,
+      "source": 0.2
+    }
+  },
+  "fitted_calibration": {
+    "temperature": 1.0
+  },
+  "fixed_parameters": {
+    "reference_cluster_count": 3.0,
+    "time_decay_per_day": 0.01,
+    "epsilon": 1e-8,
+    "source_baselines": {
+      "official_registry": 0.9,
+      "academic": 0.88,
+      "open_web": 0.72,
+      "social_media": 0.72,
+      "news_media": 0.68,
+      "video_or_github": 0.65,
+      "market_data": 0.6
+    },
+    "conformal_error_budget": 0.05
+  },
+  "conformal_calibration": {
+    "threshold": 0.35,
+    "is_infinite": false,
+    "family_count": 20,
+    "rank": 20
+  }
+}

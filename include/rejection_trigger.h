@@ -1,72 +1,80 @@
 #pragma once
 
+#include "qualifier_types.h"
+
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
 
+#define REJECTION_TRIGGER_ERROR_BUDGET 0.05
+
 namespace chongming::qualifier {
 
-/** README 第七层使用的错误预算和四条显式安全阈值。 */
+/** 用户预先指定的 family-level split conformal 错误预算。 */
 struct RejectionTriggerConfig {
-    double error_budget{0.05};
-    double sufficiency_threshold{0.30};
-    double consensus_threshold{0.40};
-    double independence_threshold{0.30};
-    double calibrated_probability_threshold{0.35};
-    double low_confidence_sufficiency_threshold{0.50};
+    double error_budget{REJECTION_TRIGGER_ERROR_BUDGET};
 };
 
-/** 拒答可能由多个条件同时触发，因此原因使用数组而不是单一枚举。 */
+/** calib 中一条带 family 与真值标签的声明概率。 */
+struct ConformalCalibrationSample {
+    std::string family_id;
+    FourClassProbabilities probabilities;
+    CredibilityLabel true_label{CredibilityLabel::InsufficientInformation};
+};
+
+/**
+ * family 级 conformal 分位点。
+ * is_infinite=true 表示样本不足、q_conf=+infinity，此时预测集包含全部类别。
+ */
+struct ConformalThreshold {
+    double value{0.0};
+    bool is_infinite{false};
+    std::size_t family_count{0};
+    std::size_t rank{0};
+};
+
 enum class RejectionReason {
-    ConformalThresholdExceeded,
-    InsufficientEvidence,
-    JuryDisagreement,
-    SourceDependency,
-    LowCalibratedProbability,
-    InsufficientEvidenceForLowConfidence
+    EmptyPredictionSet,
+    MultipleCandidateLabels
 };
 
-/** 第七层需要的全部输入；任一字段未定义时尚不能作出完整拒答决定。 */
-struct RejectionInput {
-    std::optional<double> nonconformity_score;
-    std::optional<double> conformal_threshold;
-    std::optional<double> sufficiency;
-    std::optional<double> consensus;
-    std::optional<double> independence;
-    std::optional<double> calibrated_probability;
-};
-
-/** 一次完整的回答/拒答决定以及可审计的触发原因。 */
+/** 单条声明的 conformal 预测集和最终回答/拒答决定。 */
 struct RejectionDecision {
     bool should_reject{false};
+    std::vector<CredibilityLabel> prediction_set;
+    std::optional<CredibilityLabel> accepted_label;
     std::vector<RejectionReason> reasons;
     std::string suggested_message;
 };
 
+/** 第七层 family-level split conformal 拒答器。 */
 class RejectionTrigger {
 public:
-    /** 配置不合法时抛出 std::invalid_argument。 */
     explicit RejectionTrigger(
         RejectionTriggerConfig config = RejectionTriggerConfig{});
 
     /**
-     * 根据校准集计算 tau=s_(k)。空校准集没有阈值，返回 nullopt。
-     * 非一致性分数必须位于 [0,1]。
+     * 先在每个 family 内取真标签非一致性分数的最大值，再计算有限样本分位点。
+     * calib 为空时返回 nullopt；样本不足时返回 is_infinite=true。
      */
-    std::optional<double> conformalThreshold(
-        const std::vector<double>& calibration_nonconformity_scores) const;
+    std::optional<ConformalThreshold> conformalThreshold(
+        const std::vector<ConformalCalibrationSample>& calibration) const;
 
-    /**
-     * 应用保形阈值和 README 的四条安全规则。输入未完整时返回 nullopt，
-     * 以区分“尚未计算”和“已计算且允许回答”。
-     */
-    std::optional<RejectionDecision> decide(const RejectionInput& input) const;
+    /** 根据 Gamma={k:1-p_k<=q_conf} 构造预测集；顺序固定为 T/M/I/F。 */
+    std::vector<CredibilityLabel> predictionSet(
+        const FourClassProbabilities& probabilities,
+        const ConformalThreshold& threshold) const;
+
+    /** 预测集恰为单例时回答，否则拒答；不再追加独立硬阈值。 */
+    RejectionDecision decide(
+        const FourClassProbabilities& probabilities,
+        const ConformalThreshold& threshold) const;
 
 private:
     RejectionTriggerConfig config_;
 };
 
-/** 返回拒答原因的稳定中文说明。 */
 const char* toString(RejectionReason reason) noexcept;
 
 }  // namespace chongming::qualifier

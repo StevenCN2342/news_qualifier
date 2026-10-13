@@ -1,640 +1,652 @@
-# 项目名称：“重明鸟”智能体可信度判定与量化模型
+# 重明鸟新闻可信度量化模型（news_qualifier）
 
-# 项目定位
+## 1. 项目定位
 
-`news_qualifier` 是“重明”事实核查系统中的确定性量化评分组件。它不负责读取原始新闻、调度大模型、执行事实拆分或进行网络检索，而是接收 ChongMing 中 Agent/NLI 模型生成的结构化中间判断，按照本 README 所述七层算法计算可审计的评分、校准概率和拒答决定。
+`news_qualifier` 是“重明”事实核查系统中的确定性量化计算组件。它接收已经完成事实拆分、证据标注、NLI 判断、关系维度评分和陪审团评审的结构化 JSON，运行七层 MC-Score 算法，输出逐层可审计结果、四分类概率和拒答决定。
 
-双方建议按以下职责边界协作：
+本项目不负责：
 
-| 模块 | 主要职责 |
+- 从一段原始新闻正文中自动拆分声明；
+- 调用 DeepSeek、豆包或其他大模型；
+- 联网检索证据；
+- 自动生成 NLI 标签、因果维度分数或陪审团意见；
+- 生成最终面向用户的自然语言回答。
+
+这些工作预计由 ChongMing 的工作 Agent 和预处理 Agent 完成。当前推荐的职责边界为：
+
+| 模块 | 职责 |
 | --- | --- |
-| ChongMing | 原始新闻读取、事实拆分、Agent 通路选择、证据检索、NLI/关系判断、生成陪审团原始意见、子进程并发与生命周期管理 |
-| news_qualifier | 证据可靠性计算、内容/充分性/逻辑评分、陪审团意见融合、多维综合评分、概率校准、拒答判定 |
+| 工作 Agent | 事实拆分、证据检索、NLI、关系判断和陪审团意见 |
+| 预处理 Agent | 补齐字段、统一同义词、转换枚举并生成 `schema_version=3` JSON |
+| `news_qualifier` | 七层确定性计算、概率校准、conformal 拒答和结果序列化 |
+| 回答 Agent | 根据 `answer_agent_input` 生成自然语言回答，不绕过拒答决定 |
 
-ChongMing 提供的是模型或 Agent 的局部判断，例如 NLI 标签、因果概率和陪审团投票；最终的公式计算及量化结论由 `news_qualifier` 完成。
+完整算法理论以 [重明鸟MC-Score优化版算法规范.md](./重明鸟MC-Score优化版算法规范.md) 为准；输入字段以 [算法层输入JSON结构.md](./算法层输入JSON结构.md) 为准。README 只描述当前工程实现，不再维护一套独立的旧公式。
 
-# 当前实现状态
+## 2. 当前实现状态
 
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
-| 第一至第五层算法 | 已实现 | 包含证据、原子声明、逻辑、陪审团和多维评分 |
-| 第六层概率校准 | 已实现 | 支持温度缩放和 ECE；温度训练流程尚未确定 |
-| 第七层拒答判定 | 已实现 | 支持保形阈值和四条显式规则；非一致性分数定义尚待评审 |
-| JSON/JSONL 输入解析 | 已实现 | 当前协议版本为 `schemaVersion: 1` |
-| 结果 JSON 序列化 | 未实现 | 输出协议仍是提案，等待 ChongMing 维护者评审 |
-| 子进程入口 `main.cpp` | 未实现 | 待输入输出协议冻结后实现 |
-| 构建系统 `CMakeLists.txt` | 未实现 | 上传和部署前需要补充 |
-| 持久化单元测试 | 未实现 | 当前代码已做严格编译与冒烟验证，但测试尚未纳入仓库 |
+| 第一至第五层前向计算 | 已实现 | 证据簇、内容方向、充分性、逻辑、陪审团及 MC-Score |
+| 第六层四分类概率 | 已实现 | 支持四分类温度缩放和 Macro-NLL、Brier、ECE 指标计算 |
+| 第七层拒答判定 | 已实现 | 使用 family-level split conformal 预测集；单例才回答 |
+| `schema_version=3` JSON/JSONL 读取 | 已实现 | `JsonReader` 支持文件、字符串、流和逐行 JSONL |
+| 七层结果 JSON/JSONL 写出 | 已实现 | `JsonWriter` 保留输入并追加全部七层结果 |
+| 冻结模型配置读取 | 已实现 | 校验参数范围、权重约束、来源基线和 conformal 阈值 |
+| 七层统一运行器 | 已实现 | `QualifierPipeline` 被 predict 调用，未来由 sandbox 复用 |
+| `predict` 命令行 | 已实现 | 支持文件输出或纯 JSON 标准输出 |
+| CMake 构建 | 已实现 | 生成静态核心库和 `news_qualifier.exe` |
+| `sandbox` 命令行 | 已预留，未实现 | 当前会明确返回“P1 尚未实现” |
+| 12 参数优化 | 未实现 | 待实现 family 分组交叉验证和参数优化器 |
+| 温度拟合器 | 未实现 | 当前只会使用配置中冻结的 `temperature` |
+| sandbox 数据集读取与切分 | 未实现 | 待实现 `family_id` 分组和 fit/calib/test 切分 |
+| 冻结配置写出 | 未实现 | 当前只有读取器；writer 属于 P1 |
+| DeepSeek/豆包 Agent 接口 | 未实现 | 不影响人工 JSON 的本地联调 |
+| 持久化自动测试 | 未实现 | 已通过严格编译、CMake 构建和临时端到端冒烟测试 |
 
-# 项目架构
-
-计划中的服务端调用链如下：
+当前 P0 可以完成：
 
 ```text
-ChongMing
-├── 事实拆分与证据检索 Agent
-├── NLI、关系判断与陪审团意见
-└── 子进程调度器
-        │ JSONL / stdin
-        ▼
-news_qualifier（独立、单线程子进程）
-├── JsonReader
-├── 第一至第五层量化
-├── 第六层概率校准
-├── 第七层拒答判定
-└── JsonWriter（待实现）
-        │ JSONL / stdout（待实现）
-        ▼
-ChongMing 保存、展示或进入人工复核
+一条符合 schema 3 的结构化新闻 JSON
+        ↓
+加载冻结配置或联调配置
+        ↓
+完整运行七层算法
+        ↓
+生成包含七层结果的输出 JSON
 ```
 
-并发、超时、取消和子进程数量由 ChongMing 控制；单个 `news_qualifier` 进程按顺序处理 JSONL 请求，不在算法内部创建线程。
+这只能证明工程链路可以运行。使用未验证配置得到的结果不能证明算法具有现实准确性。
 
-当前仓库的真实目录如下：
+## 3. 当前架构
+
+```text
+人工或未来的预处理 Agent
+        │ schema_version=3 JSON
+        ▼
+main.cpp：predict 子命令
+        │
+        ├─ ModelConfigReader ──► model_config.json
+        │
+        ├─ JsonReader ─────────► QualifierRequest
+        │
+        ▼
+QualifierPipeline
+        ├─ 第一、二层：AtomicContentQualifier
+        │                 └─ EvidenceAuthenticityQualifier
+        ├─ 第三层：LogicRelationshipQualifier
+        ├─ 第四层：Jury
+        ├─ 第五层：MultiDimensionalQualifier
+        ├─ 第六层：ProbabilityAdjuster
+        └─ 第七层：RejectionTrigger
+        │
+        ▼
+QualifierResult
+        │
+        ▼
+JsonWriter
+        │
+        ├─ output.json
+        └─ stdout（只包含 JSON）
+```
+
+当前程序内部不创建线程。未来部署为独立子进程时，并发、超时、取消、重启和资源限制应由 ChongMing 父进程管理。
+
+## 4. 目录结构
 
 ```text
 news_qualifier/
-├── json_reader/
-│   ├── json_reader.h
-│   └── json_reader.cpp
-├── include/
-│   ├── qualifier_types.h
-│   ├── atomic_content_qualifier.h
-│   ├── evidence_authenticity_qualifier.h
-│   ├── logic_relationship_qualifier.h
-│   ├── jury.h
-│   ├── multi_dimensional_qualifier.h
-│   ├── probability_adjuster.h
-│   └── rejection_trigger.h
-├── impl/
-│   ├── atomic_content_qualifier.cpp
-│   ├── evidence_authenticity_qualifier.cpp
-│   ├── logic_relationship_qualifier.cpp
-│   ├── jury.cpp
-│   ├── multi_dimensional_qualifier.cpp
-│   ├── probability_adjuster.cpp
-│   └── rejection_trigger.cpp
-└── README.md
+├─ main.cpp
+├─ CMakeLists.txt
+│
+├─ include/                         七层算法接口和共享类型
+├─ impl/                            七层算法实现
+│
+├─ json_reader/
+│  ├─ json_reader.h
+│  └─ json_reader.cpp
+│
+├─ json_writer/
+│  ├─ json_writer.h
+│  └─ json_writer.cpp
+│
+├─ model_config/
+│  ├─ model_config_types.h
+│  ├─ model_config_reader.h
+│  └─ model_config_reader.cpp
+│
+├─ runtime/
+│  ├─ qualifier_pipeline.h
+│  ├─ qualifier_pipeline.cpp
+│  ├─ prediction_runner.h
+│  └─ prediction_runner.cpp
+│
+├─ config/
+│  ├─ model_config.smoke_finite.json
+│  └─ model_config.smoke_infinite.json
+│
+├─ 算法层输入JSON结构.md
+└─ 重明鸟MC-Score优化版算法规范.md
 ```
 
-计划在协议冻结后增加：
+计划在 P1 增加：
 
 ```text
-runner/main.cpp
-json_writer/json_writer.h
-json_writer/json_writer.cpp
-tests/
-CMakeLists.txt
+sandbox/
+├─ sandbox_types.h
+├─ sandbox_dataset_reader.h/.cpp
+├─ family_dataset_splitter.h/.cpp
+└─ sandbox_runner.h/.cpp
+
+training/
+├─ parameter_optimizer.h/.cpp
+├─ temperature_fitter.h/.cpp
+└─ test_evaluator.h/.cpp
+
+model_config/
+└─ model_config_writer.h/.cpp
 ```
 
-# 输入协议（已实现，schemaVersion 1）
+## 5. 构建
 
-`json_reader` 支持一个完整 JSON 文档，也支持每行一个独立请求的 JSONL。服务端常驻子进程推荐使用 JSONL，以便逐条处理请求并限制内存占用。
+### 5.1 环境要求
 
-根对象结构为：
+- 支持 C++17 的编译器；
+- CMake 3.16 或更高版本；
+- Windows 可使用 MinGW-w64 或 Visual Studio C++ 工具链；
+- 当前代码不依赖第三方 JSON 库。
+
+### 5.2 MinGW 构建
+
+在 PowerShell 或 CMD 中进入项目目录：
+
+```powershell
+cd D:\ChongMing\news_qualifier
+cmake -S . -B build -G "MinGW Makefiles"
+cmake --build build --parallel 4
+```
+
+生成：
+
+```text
+build/news_qualifier.exe
+```
+
+### 5.3 Visual Studio 构建
+
+```powershell
+cmake -S . -B build
+cmake --build build --config Release
+```
+
+多配置生成器通常输出：
+
+```text
+build/Release/news_qualifier.exe
+```
+
+## 6. predict 命令行
+
+### 6.1 写入文件
+
+```powershell
+.\build\news_qualifier.exe predict `
+  --model config\model_config.smoke_finite.json `
+  --input input.json `
+  --output output.json
+```
+
+输出位置完全由 `--output` 决定。当前 writer 不自动创建父目录，因此指定 `runs\manual\output.json` 前应先创建对应目录。
+
+### 6.2 写入标准输出
+
+```powershell
+.\build\news_qualifier.exe predict `
+  --model config\model_config.smoke_finite.json `
+  --input input.json `
+  --stdout
+```
+
+使用紧凑 JSON：
+
+```powershell
+.\build\news_qualifier.exe predict `
+  --model config\model_config.smoke_finite.json `
+  --input input.json `
+  --stdout `
+  --compact
+```
+
+`stdout` 只输出机器可解析的 JSON；命令行错误、输入错误、配置错误和算法错误均写入 `stderr`。
+
+### 6.3 帮助
+
+```powershell
+.\build\news_qualifier.exe --help
+```
+
+### 6.4 退出码
+
+| 退出码 | 含义 |
+| ---: | --- |
+| `0` | 成功 |
+| `1` | 命令行参数或模式错误 |
+| `2` | 输入 JSON 语法或业务约束错误 |
+| `3` | 冻结模型配置错误 |
+| `4` | 算法计算或其他运行错误 |
+| `5` | 输出 JSON 写入错误 |
+
+当前 `main.cpp` 一次只处理一个完整 JSON 文件。底层 `JsonReader` 和 `JsonWriter` 已支持 JSONL，但常驻 JSONL 子进程协议尚未接入命令行。
+
+## 7. 输入协议
+
+### 7.1 输入不是原始新闻正文
+
+`predict` 接收的是预处理完成的算法输入，而不是只包含 `title/content` 的原始新闻。输入必须包含工作 Agent 产生的证据标注、关系评分和陪审团意见。
+
+协议使用：
+
+```text
+schema_version = 3
+snake_case 字段名
+UTF-8 JSON
+```
+
+总体结构：
 
 ```text
 QualifierRequest
-├── schemaVersion       必填，目前只能为 1
-├── requestId           必填，非空字符串
-├── claims              必填，可为空数组
-│   └── evidence        每条声明内必填，可为空数组
-├── relations           可选，缺失等价于空数组
-└── juryOpinions        可选，缺失等价于空数组
+├─ schema_version                 固定为 3
+├─ request_id
+├─ event_id
+├─ original_text
+├─ source
+├─ publish_date
+├─ event_nature
+├─ domain
+├─ event_time
+├─ seven_elements
+├─ atomic_claims[2..5]
+│  ├─ claim_id
+│  ├─ claim_text
+│  ├─ seven_elements
+│  ├─ check_question
+│  ├─ claim_type
+│  ├─ entities[]
+│  ├─ canon_refs[]
+│  ├─ keywords[]
+│  ├─ event_day
+│  ├─ time_sensitive
+│  └─ evidence[]
+├─ logic_edges[1..4]
+└─ jury_opinions[]                每条 claim 恰好一个分组
 ```
 
-## 1.根字段
+完整字段约束和可直接联调的样例见 [算法层输入JSON结构.md](./算法层输入JSON结构.md)。
 
-| 字段 | 类型 | 必填 | 约束 |
-| --- | --- | --- | --- |
-| `schemaVersion` | integer | 是 | 当前只能为 `1` |
-| `requestId` | string | 是 | 非空，由父进程生成，用于关联未来响应 |
-| `claims` | array | 是 | 声明 ID 在单个请求中必须唯一 |
-| `relations` | array | 否 | 引用的 Claim ID 必须存在 |
-| `juryOpinions` | array | 否 | 每个 Claim 最多出现一个意见分组 |
+### 7.2 主要枚举
 
-## 2.claims与evidence
-
-每条 Claim 表示事实拆分后的原子声明：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `id` | string | 是 | 非空且在本请求内唯一 |
-| `text` | string | 是 | 非空的原子声明正文 |
-| `keywords` | string[] | 是 | 声明关键词；重复值读取后自动去重 |
-| `eventDay` | integer | 否 | 事件日期的整日序号；声明与证据必须使用同一纪元 |
-| `timeSensitive` | boolean | 否 | 缺失时为 `false` |
-| `evidence` | array | 是 | 当前声明的候选证据，可为空 |
-
-每条 Evidence 只属于其外层 Claim：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `id` | string | 是 | 非空；同一 Claim 内必须唯一 |
-| `originalSourceId` | string | 否 | 原始来源簇 ID；缺失时按独立证据处理 |
-| `sourceType` | enum string | 否 | 缺失时来源基线可靠性为 0 |
-| `keywords` | string[] | 是 | 证据关键词 |
-| `eventDay` | integer | 否 | 证据事件日期的整日序号 |
-| `nliLabel` | enum string | 是 | NLI 模型的支持/反驳/中立判断 |
-| `nliConfidence` | number | 是 | NLI 置信度，必须位于 `[0,1]` |
-
-`sourceType` 当前接受：
+`source_type`：
 
 ```text
-OfficialRegistry
-Academic
-OpenWeb
-SocialMedia
-NewsMedia
-VideoOrGitHub
-MarketData
+official_registry
+academic
+open_web
+social_media
+news_media
+video_or_github
+market_data
 ```
 
-`nliLabel` 当前接受：
+`nli_label`：
 
 ```text
-Support
-Refute
-Neutral
+support
+refute
+neutral
 ```
 
-## 3.relations
-
-关系在外部协议中通过稳定的 Claim ID 建立连接；`JsonReader` 会将 ID 转换成 C++ 算法内部使用的数组下标。
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `leftClaimId` | string | 是 | 左侧声明 ID |
-| `rightClaimId` | string | 除 `Not` 外必填 | 右侧声明 ID |
-| `type` | enum string | 是 | 关系类型 |
-| `parsingSucceeded` | boolean | 否 | 缺失时为 `true`；失败时逻辑层回退到多数投票 |
-| `nliScore` | number | 条件必填 | 时间、条件、转折、并列关系解析成功时必填 |
-| `causalProbability` | number | 条件必填 | 因果关系解析成功时必填 |
-| `counterfactualProbability` | number | 条件必填 | 因果关系解析成功时必填 |
-
-所有关系概率必须位于 `[0,1]`。`type` 当前接受：
+`jury_opinions[].opinions[].verdict`：
 
 ```text
-Temporal
-Conditional
-Contrast
-Parallel
-And
-Or
-Not
-Implication
-Causal
+support
+refute
+uncertain
 ```
 
-## 4.juryOpinions
-
-陪审团输入是 Agent 的原始投票，不是最终陪审团分数。`news_qualifier` 将继续计算信任权重、归一化票数、熵、一致性分和陪审团分。
+`logic_edges[].rel`：
 
 ```text
-juryOpinions[]
-├── claimId
-└── opinions[]
-    ├── verdict
-    ├── hybridRetrievalScore
-    ├── confidence
-    └── completedWithoutError
+temporal
+causal
+conditional
+contrast
+coordinate
 ```
 
-| 字段 | 类型 | 必填 | 约束 |
-| --- | --- | --- | --- |
-| `claimId` | string | 是 | 必须引用本请求中的 Claim |
-| `verdict` | enum string | 是 | `Support`、`Refute` 或 `Uncertain` |
-| `hybridRetrievalScore` | number | 是 | 必须位于 `[0,1]` |
-| `confidence` | number | 是 | 必须位于 `[0,1]` |
-| `completedWithoutError` | boolean | 是 | Agent 是否无错误完成推理 |
+关系维度必须与关系类型严格对应：
 
-## 5.完整请求示例
+| `rel` | `required_dimensions` 和 `dimension_scores` |
+| --- | --- |
+| `temporal` | `S_time` |
+| `causal` | `S_time`, `S_mech`, `S_counter`, `S_confound`, `S_dose` |
+| `conditional` | `S_mech`, `S_counter` |
+| `contrast` | `S_contrast` |
+| `coordinate` | `S_coordinate` |
+
+### 7.3 `family_id` 不属于普通 predict 输入
+
+`family_id` 用于 sandbox 按事件族切分 fit/calib/test，以及在 calib 中计算族级 conformal 阈值。生产 predict 只消费已经冻结的阈值，因此普通 `QualifierRequest` 不需要 `family_id`。
+
+未来 sandbox 的一条 JSONL 记录预计为：
+
+```text
+SandboxSample
+├─ sample_id
+├─ family_id
+├─ claim_labels[]
+└─ request                       内嵌完整 QualifierRequest
+```
+
+## 8. 输出协议
+
+`JsonWriter` 保留完整输入，并在根对象中追加 `qualification_result`：
+
+```text
+原始 QualifierRequest 字段
+└─ qualification_result
+   ├─ algorithm_version
+   ├─ input_schema_version
+   ├─ config_version
+   ├─ calibration_status
+   ├─ calculated_at              UTC ISO 8601
+   ├─ layer_1_evidence_authenticity
+   ├─ layer_2_evidence_sufficiency
+   ├─ layer_3_logic_relationship
+   ├─ layer_4_jury_evaluation
+   ├─ layer_5_multi_dimensional_aggregation
+   ├─ layer_6_probability_calibration
+   ├─ layer_7_conformal_rejection
+   └─ answer_agent_input
+```
+
+输出约定：
+
+- 未定义或尚未计算的数值写为 JSON `null`，不伪造成 `0` 或 `0.5`；
+- 有限数值以足够往返解析的精度写出；
+- JSON 不支持 `Infinity`，无穷 conformal 阈值写成 `"value": null` 和 `"is_infinite": true`；
+- 第七层预测集恰为单例时 `should_reject=false`；为空或包含多个类别时拒答；
+- `answer_agent_input` 是回答 Agent 使用的精简视图，不替代完整审计结果；
+- `event_has_rejected_claims` 只表示至少有一个 claim 被拒答，目前没有额外定义事件级覆盖规则。
+
+四分类稳定标识为：
+
+```text
+confirmed_true
+mostly_true
+insufficient_information
+confirmed_false
+```
+
+拒答原因稳定标识为：
+
+```text
+empty_prediction_set
+multiple_candidate_labels
+```
+
+## 9. 冻结模型配置
+
+生产推理不会从每条新闻输入中读取算法参数，而是通过 `--model` 加载冻结配置。
+
+冻结配置包含四类数据：
+
+### 9.1 fit 联合优化的 12 个数值
+
+```text
+sigmoid_alpha
+sufficiency_gamma
+
+causal_weights:
+  time
+  mechanism
+  counterfactual
+  confounder
+  dose_response
+
+aggregation_weights:
+  content
+  logic
+  sufficiency
+  jury
+  source
+```
+
+约束：
+
+- 五个 `causal_weights` 非负且和为 1；
+- 五个 `aggregation_weights` 非负且和为 1；
+- `aggregation_weights.logic <= 0.8`。
+
+### 9.2 单独拟合的温度
+
+```text
+fitted_calibration.temperature
+```
+
+温度不参与上述 12 参数的联合搜索。它应在最佳基础参数产生的 family 分组折外预测上，使用多分类 NLL 单独拟合。
+
+### 9.3 预先冻结的固定参数
+
+```text
+reference_cluster_count
+time_decay_per_day
+epsilon
+source_baselines
+conformal_error_budget
+```
+
+### 9.4 calib 产生的结果
+
+```text
+conformal_calibration.threshold
+conformal_calibration.is_infinite
+conformal_calibration.family_count
+conformal_calibration.rank
+```
+
+`ModelConfigReader` 会检查版本、数值范围、权重和、温度范围、来源类型完整性，以及 `error_budget`、`family_count` 和 `rank` 是否一致。
+
+### 9.5 联调配置
+
+仓库提供两份仅用于工程联调的配置：
+
+| 文件 | 用途 |
+| --- | --- |
+| `model_config.smoke_finite.json` | 人工有限阈值，用于观察接受/拒答分支；没有统计意义 |
+| `model_config.smoke_infinite.json` | 模拟 calib family 不足；预测集包含全部类别并拒答 |
+
+两份配置均带有：
 
 ```json
-{
-  "schemaVersion": 1,
-  "requestId": "req-001",
-  "claims": [
-    {
-      "id": "c1",
-      "text": "某地区今年的粮食产量增长了10%",
-      "keywords": ["地区", "今年", "粮食产量", "增长10%"],
-      "eventDay": 20350,
-      "timeSensitive": true,
-      "evidence": [
-        {
-          "id": "e1",
-          "originalSourceId": "source-001",
-          "sourceType": "OfficialRegistry",
-          "keywords": ["粮食产量", "增长10%"],
-          "eventDay": 20349,
-          "nliLabel": "Support",
-          "nliConfidence": 0.92
-        }
-      ]
-    }
-  ],
-  "relations": [],
-  "juryOpinions": [
-    {
-      "claimId": "c1",
-      "opinions": [
-        {
-          "verdict": "Support",
-          "hybridRetrievalScore": 0.85,
-          "confidence": 0.90,
-          "completedWithoutError": true
-        }
-      ]
-    }
-  ]
-}
+"calibration_status": "unvalidated"
 ```
 
-JSONL 模式要求每个非空行都是一个完整根对象，不支持一条记录跨越多行。空行会被忽略；语法或业务字段不合法时抛出 `JsonReadError`，错误信息包含来源名、行列号或 JSON 字段路径。
+不能将它们作为正式生产模型，也不能用其结果宣称算法准确率。
 
-# 输出协议（提案，尚未实现）
+## 10. 七层算法摘要
 
-输出协议必须与 ChongMing 维护者共同评审后才能冻结。当前建议每条输入对应一条输出，并原样返回 `schemaVersion` 和 `requestId`。预计结果至少包含：
+本节仅用于理解代码调用关系，完整定义、边界行为、参数优化协议和理论限制见 [重明鸟MC-Score优化版算法规范.md](./重明鸟MC-Score优化版算法规范.md)。
+
+### 第一层：按来源簇计算内容方向
+
+同一原始来源的转载归入一个簇。每簇只保留最强支持、最强反驳和最强中立有效量，避免转载数量线性放大证据。
 
 ```text
-schemaVersion
-requestId
-ok
-result
-├── claimEvaluations
-├── logicEvaluations
-├── juryEvaluations
-├── dimensions
-├── mcScore
-├── label
-├── calibratedProbability
-└── rejection
-    ├── shouldReject
-    ├── reasons
-    └── suggestedMessage
+D_i = (支持强度 - 反驳强度) / (支持强度 + 反驳强度 + epsilon)
+S_content,i = sigmoid(alpha * D_i)
 ```
 
-建议错误响应至少包含稳定错误码和可读信息：
+没有方向性证据时 `D_i=0`、`S_content=0.5`。优化规范已删除旧参数 `beta`。
 
-```json
-{
-  "schemaVersion": 1,
-  "requestId": "req-001",
-  "ok": false,
-  "error": {
-    "code": "INVALID_INPUT",
-    "message": "输入字段不符合协议"
-  }
-}
+### 第二层：证据充分性
+
+```text
+E_i = sum(max(s_g, r_g, n_g)) / kappa
+S_suff,i = 1 - exp(-gamma * E_i)
 ```
 
-上述字段名称、是否返回全部中间量、浮点精度和错误后是否继续处理下一行，均属于待评审内容，当前代码没有实现结果 JSON 序列化。
+同一来源簇只贡献一次。充分性不会直接改写内容方向。
 
-# 第六、七层集成待确认事项
+### 第三层：逻辑关系
 
-以下问题不影响当前公式实现，但会影响最终进程协议、训练/校准流程和部署方式：
+因果边使用五个维度：
 
-1. 温度参数 $T$ 由谁训练、采用什么损失函数及优化方法；
-2. 训练集、验证集、校准集和测试集如何划分，是否需要按模型版本分别保存；
-3. `temperature`、`epsilon`、拒答阈值从配置文件、命令行还是环境变量加载；
-4. ECE 的默认分箱数量及评估报告格式；
-5. 新样本非一致性分数的明确定义；
-6. 保形校准分数由谁生成和维护，阈值 $\tau$ 离线预计算还是进程启动时计算；
-7. 校准数据缺失、版本不匹配或阈值不可用时，是拒答、报错还是进入人工复核；
-8. 第六、七层参数属于每个请求、每个模型版本，还是整个评分器进程的公共配置。
+```text
+R_ij = sum(w_k * S_ijk)
+L_ij = p_NLI,ij * R_ij
+```
 
-在这些问题确认前，`json_reader` 暂不接收第六、七层运行参数；当前实现通过 C++ 配置对象接收它们。
+没有逻辑边时保持 `logic_available=false`；第五层删除逻辑项，第六层映射时使用中性逻辑量 `0.5`。
 
-# 工程约定
+### 第四层：带符号陪审团
 
-- C++ 命名空间为 `chongming::qualifier`。
-- 算法结果使用 `std::optional` 区分“尚未计算”和数值 0。
-- 完成计算但方向信息不足时，方向分数取 0.5；完成计算但质量条件不足时，质量分数取 0。
-- 线协议中的概率和评分必须位于 `[0,1]`，`JsonReader` 对越界输入明确报错；算法内部仍保留防御性边界保护，只有公式明确要求时才把裁剪作为正式计算步骤。
-- `stdout` 将来只用于机器可解析的 JSONL；诊断信息应写入 `stderr`。
-- 单个评分器进程保持单线程；父进程负责并发、超时、取消、重启和资源限制。
-- JSONL 到达 EOF 时评分器应正常退出；完整退出码和信号约定待 `main.cpp` 实现时确定。
+支持票方向为 `+1`，反驳票为 `-1`，未知票为 `0`。陪审团得分为：
 
-# 代码评审重点
+```text
+S_jury,i = 0.5 + 0.5 * D_jury,i * Consensus_i
+```
 
-首次上传 GitHub 后，建议重点评审：
+没有有效投票时显式记录 `jury_missing=true`，使用 `jury=0.5` 和 `consensus=0`。旧的 `w_R`、`w_U` 已删除。
 
-1. ChongMing 能否稳定生成输入协议中的全部字段；
-2. 字段由哪个 Agent 或模型负责，以及缺失时如何处理；
-3. 当前输入枚举是否足以覆盖实际来源和关系类型；
-4. 第六、七层的训练数据、非一致性分数和配置归属；
-5. 输出是否需要全部中间分数，还是只需要最终结果和审计摘要；
-6. `schemaVersion: 1` 冻结后如何管理不兼容变更；
-7. 本地 JSONL 固定样例和端到端预期结果。
+### 第五层：逐声明 MC-Score
 
-# 七层算法研究成果
+```text
+MC_i = weighted_mean(
+  content,
+  available_logic,
+  sufficiency,
+  jury,
+  source * independence
+)
+```
 
-`include/` 中的 `.h` 文件声明数据结构和接口，`impl/` 中的 `.cpp` 文件提供对应实现。以下七层算法论述为研究成果，工程实现和协议调整不得直接改写算法公式；如研究结论发生变化，应单独评审并同步更新代码、测试与本文档。
+使用五个非负 `lambda` 权重。无逻辑边时删除逻辑项并重新归一化，而不是把缺失逻辑当成 0。
 
-下文统一使用以下记号：原子声明记为 $c_i$，其第 $j$ 条证据记为 $e_{ij}$，全部原子声明的集合记为 $C$，逻辑关系集合记为 $R$，证据集合记为 $\mathcal{E}$。所有分数均应限制在 $[0,1]$ 内。
+### 第六层：四分类概率与温度校准
 
-### (1)原子声明内容事实性评分
+通过 `MC_i`、方向性充分量和逻辑质量构造 `T/M/I/F` 四类原始质量，再使用多分类温度缩放。温度范围为 `[0.1,5.0]`。
 
-第一步计算每条证据的可靠性，并据此汇总原子声明的支持强度与反驳强度。
+这不是旧版“把单个 MC-Score 做二分类 logit 温度缩放”的实现。
 
-#### 1.来源可靠性
+### 第七层：family-level split conformal 拒答
 
-证据 $e_{ij}$ 的可靠性为：
+calib 阶段按 `family_id` 聚合真标签非一致性分数，得到冻结阈值 `q_conf`。predict 阶段构造：
 
-$$
-r_{ij}=r_{\mathrm{base}}(s_{ij})\cdot\rho_{ij}\cdot\tau_{ij}
-$$
+```text
+Gamma_i = {k : 1 - p_k <= q_conf}
+```
 
-- $r_{\mathrm{base}}(s_{ij})$：来源类型的基线可靠性。
-- $\rho_{ij}$：证据与声明的主题相关性。
-- $\tau_{ij}$：证据的时效性。
+唯一判定入口为：
 
-建议的来源基线分数如下：
+```text
+|Gamma_i| == 1  → 接受唯一标签
+|Gamma_i| != 1  → 拒答
+```
 
-| 来源类型 | $r_{\mathrm{base}}$ |
-| --- | ---: |
-| 语料库或官方注册库 | 0.90 |
-| 学术来源 | 0.88 |
-| 开放网络 | 0.72 |
-| 社交媒体 | 0.72 |
-| 新闻媒体 | 0.68 |
-| 视频或 GitHub | 0.65 |
-| 市场数据 | 0.60 |
+当前实现不再叠加旧版充分性、共识度、独立性和校准概率硬阈值。
 
-设声明和证据的关键词集合分别为 $K_{c_i}$ 与 $K_{e_{ij}}$，主题相关性采用包含度计算：
+## 11. 参数优化与 sandbox 计划
 
-$$
-\rho_{ij}=\frac{|K_{c_i}\cap K_{e_{ij}}|}
-{\min(|K_{c_i}|,|K_{e_{ij}}|)}
-$$
+P1 计划使用外层 sandbox JSONL：
 
-当 $\rho_{ij}<\theta_\rho$ 时过滤该证据，建议 $\theta_\rho=0.2$。实现时若任一关键词集合为空，应直接将 $\rho_{ij}$ 置为 0，避免除零。
+```text
+SandboxSample
+├─ sample_id
+├─ family_id
+├─ claim_labels[]
+│  ├─ claim_id
+│  └─ true_label
+└─ request
+```
 
-对于时效敏感的事件，时效性采用指数衰减：
+训练流程必须严格分离：
 
-$$
-\tau_{ij}=\exp\left(-\lambda\left|t_{e_{ij}}-t_{\mathrm{claim}}\right|\right)
-$$
+```text
+fit
+  ├─ 按 family 分组交叉验证
+  ├─ 搜索 alpha、gamma、w1..w5、lambda1..lambda5
+  └─ 使用最佳参数的折外预测拟合温度 T
 
-其中 $\lambda$ 为按天计算的衰减速率，建议 $\lambda=0.01$；对于非时效事件，令 $\tau_{ij}=1$。
+calib
+  └─ 锁定基础参数和 T，只计算 q_conf
 
-#### 2.NLI证据关系判定
+test
+  └─ 全部参数冻结后只运行一次，不能用于反复挑选参数
+```
 
-自然语言推理模型输出：
+不应对 12 个基础参数做完整笛卡尔积网格搜索。规范建议：
 
-$$
-(y_{ij},p_{ij}),\qquad
-y_{ij}\in\{S,R,N\},\quad p_{ij}\in[0,1]
-$$
+- `alpha` 和 `gamma` 在对数尺度搜索；
+- 两组五维权重通过单纯形或 softmax 参数化；
+- 拒绝 `logic_weight > 0.8` 的候选；
+- 固定并记录随机种子、family 切分和每次 trial；
+- 使用四分类 Macro-NLL 选择基础参数，Macro-BAcc 作为并列次级指标；
+- ECE 只作为报告指标。
 
-其中 $S$、$R$、$N$ 分别表示支持、反驳和中立，$p_{ij}$ 为该判定的置信度。
+`conformal_error_budget` 必须在查看 test 结果之前指定。`q_conf`、`family_count` 和 `rank` 是 calib 的计算结果，不是联合搜索参数。
 
-#### 3.来源独立性折扣
+## 12. 工程约定
+
+- C++ 命名空间统一为 `chongming::qualifier`；
+- 算法层不直接读取配置文件，配置由 `ModelConfigReader` 读取后通过构造函数注入；
+- 宏定义只作为 Config 的默认初值，不是运行时不可覆盖的全局参数；
+- `std::optional` 为空表示未定义或尚未计算，与数值零不同；
+- 输入分数和概率由 `JsonReader` 做业务范围校验；
+- `JsonWriter` 拒绝写出 NaN 和普通 Infinity；
+- 标准输出只用于结果 JSON，诊断信息必须进入标准错误流；
+- 单个算法进程保持单线程，进程级并发由 ChongMing 管理；
+- 回答 Agent 可以组织语言，但不能推翻第七层的拒答决定；
+- 修改公式时必须同步更新优化规范、代码、配置协议和测试。
+
+## 13. 当前已知边界
+
+1. 当前没有 Agent 接口，人工输入必须已经符合完整 schema 3；
+2. 当前 smoke 配置没有经过真实 sandbox 拟合和校准；
+3. 当前 `predict` 一次处理一个 JSON，请求流式 JSONL 尚未接入 `main.cpp`；
+4. 非因果关系维度已经进入输入协议，但当前第三层普通关系主要使用 `nli_score`；这些维度如何进一步进入公式仍需单独评审；
+5. 当前没有事件级最终标签规则，只输出逐声明决定和 `event_has_rejected_claims`；
+6. 尚无持久化单元测试和回归黄金样例；
+7. 数学公式闭合不等于现实准确，真实有效性仍需独立 sandbox 数据验证。
+
+## 14. 下一阶段优先级
+
+```text
+P0（已完成）
+├─ 冻结配置读取
+├─ 七层统一流水线
+├─ predict 命令行
+├─ JSON 输出
+└─ CMake 构建
+
+P1（待实现）
+├─ sandbox JSONL 读取
+├─ family 分组切分
+├─ 12 参数优化
+├─ 温度拟合
+├─ calib conformal 调度
+├─ test 指标报告
+└─ 候选冻结配置写出
+
+P2（待实现）
+├─ 持久化单元测试
+├─ 边界黄金样例
+├─ JSON/配置回归测试
+└─ README 与命令行联调样例
+
+P3（待实现）
+├─ 预处理 Agent 适配
+├─ 回答 Agent 适配
+└─ ChongMing 父子进程协议
+```
 
-将具有相同原始来源的证据归入同一来源簇。同一簇内每条证据的折扣为：
-
-$$
-\delta_{ij}=\frac{1}{\sqrt{|\operatorname{cluster}(e_{ij})|}}
-$$
-
-因此，同一来源簇包含 $n$ 条证据时，每条证据的权重为 $1/\sqrt{n}$，该簇的总贡献按 $\sqrt{n}$ 增长，而不是随转载数量线性增长。
-
-#### 4.内容事实性得分
-
-先分别计算有效支持强度和有效反驳强度：
-
-$$
-A_i^+=\sum_j\delta_{ij}\mathbf{1}[y_{ij}=S]p_{ij}r_{ij}
-$$
-
-$$
-A_i^-=\sum_j\delta_{ij}\mathbf{1}[y_{ij}=R]p_{ij}r_{ij}
-$$
-
-再计算原子声明的内容事实性分数。为使“没有证据”保持中性，并避免除零，使用分段定义：
-
-$$
-\operatorname{ContentScore}(c_i)=
-\begin{cases}
-0.5, & A_i^++A_i^-<\varepsilon,\\[4pt]
-\sigma\left(\alpha\dfrac{A_i^+}{A_i^++A_i^-}-\beta\right),
-& A_i^++A_i^-\ge\varepsilon.
-\end{cases}
-$$
-
-其中 $\sigma(x)=1/(1+e^{-x})$，建议初始值为 $\alpha=4$、$\beta=2$、$\varepsilon=10^{-8}$。支持证据占优时分数趋近 1，反驳证据占优时趋近 0；证据势均力敌或完全缺失时分数为 0.5。证据是否足以得出结论由第二步单独判断。
-
-<!-- 算法审阅待确认：按当前公式及 α=4、β=2 计算，全部为支持证据时 ContentScore=σ(2)≈0.881，全部为反驳证据时 ContentScore=σ(-2)≈0.119；由于公式使用支持证据占比，继续增加同方向证据也不会使分数进一步趋近 1 或 0。请确认应修改“趋近 1/0”的文字表述，还是调整 α、β 或评分公式。 -->
-
-### (2)证据充分性评分
-
-第二步用于区分“缺少证据”和“已有证据证明声明为假”。原子声明 $c_i$ 的证据充分性分数为：
-
-$$
-\operatorname{SufficiencyScore}(c_i)=
-1-\exp\left(-\gamma\sum_j\delta_{ij}r_{ij}\right)
-$$
-
-建议 $\gamma=0.5$。独立且可靠的证据越多，分数越接近 1；新增证据带来的边际增益逐渐减小。
-
-<!-- 算法审阅待确认：SufficiencyScore 当前累加全部 δ_ij·r_ij，没有排除 NLI 判定为中立（y_ij=N）的证据；同时，同一来源簇的 n 条证据按当前平方根折扣仍会产生 √n 的总贡献。因此，大量中立证据或同源转载也能提高充分性。请确认充分性是否应只统计支持/反驳证据，以及是否需要对同一来源簇的充分性贡献设置上限。 -->
-
-当
-
-$$
-\operatorname{SufficiencyScore}(c_i)<\theta_{\mathrm{suff}}
-$$
-
-时，无论 `ContentScore` 为何，都将该声明标记为“信息不足”。建议 $\theta_{\mathrm{suff}}=0.3$。
-
-<!-- 算法审阅待确认：这里规定单个声明的 SufficiencyScore<0.3 时必须标记为“信息不足”，但第五步又仅按整体 MCScore 区间生成四标签，第七步使用的也是声明平均后的 S_suff。请确认该逐声明门槛是否应覆盖 MCScore 标签，以及关键声明证据不足时是否必须让整篇新闻进入“信息不足”或拒答。 -->
-
-### (3)逻辑关系真实性评分
-
-第三步检查原子声明之间的时间、因果、条件、转折和并列关系。对于关系三元组 $(c_i,c_j,rel)$，将两条声明的证据作为前提，将待验证关系作为假设，使用 NLI 模型计算：
-
-$$
-\operatorname{LogicScore}(c_i,c_j,rel)=
-\operatorname{NLI}\left(
-E_{c_i}\land E_{c_j},
-\operatorname{Relation}(c_i,c_j,rel)
-\right)
-$$
-
-对于因果关系，还需进行反事实修正：
-
-$$
-\operatorname{CausalConfidence}(c_i\rightarrow c_j)=
-p_{\mathrm{causal}}\left(1-p_{\mathrm{counterfactual}}\right)
-$$
-
-$p_{\mathrm{counterfactual}}$ 表示“移除原因事件后，结果事件仍会发生”的估计概率。该概率越高，因果关系可信度越低。
-
-复杂逻辑结构按以下规则聚合：
-
-| 逻辑关系 | 聚合公式 |
-| --- | --- |
-| 合取 AND | $S(c_1\land c_2)=\min(S(c_1),S(c_2))$ |
-| 析取 OR | $S(c_1\lor c_2)=\max(S(c_1),S(c_2))$ |
-| 否定 NOT | $S(\neg c_1)=1-S(c_1)$ |
-| 蕴含 IMPLICATION | $S(c_1\rightarrow c_2)=S(\neg c_1\lor c_2)$ |
-| 因果 CAUSAL | $S(c_1\xrightarrow{\mathrm{causal}}c_2)=S(c_1\land c_2)\cdot\operatorname{CausalConfidence}$ |
-
-当逻辑解析失败，或参与关系计算的原子声明处于不确定状态时，系统回退到原子声明的多数投票结果。
-
-### (4)多智能体德尔菲陪审团裁决融合
-
-第四步由严格法理者、开放网络实用主义者、因果怀疑论者、反操纵与阴谋叙事探测者等角色独立审议，再通过信任加权投票融合结论。
-
-智能体 $p$ 的信任分数为：
-
-$$
-\operatorname{trust}_p=
-0.4s_{\mathrm{hybrid},p}+0.4c_p+0.2I_{\mathrm{no\ error},p}
-$$
-
-其中 $s_{\mathrm{hybrid},p}$ 为混合检索平均得分，$c_p$ 为智能体自身置信度，$I_{\mathrm{no\ error},p}$ 表示推理是否无错误完成。
-
-设智能体的判定 $y_p\in\{S,R,U\}$，其中 $U$ 表示不确定。各类别的未归一化票数为：
-
-$$
-V_i(v)=\sum_{p\in P}\operatorname{trust}_p\,c_p\,\mathbf{1}[y_p=v]
-$$
-
-令总有效票重为 $Z_i=\sum_{u\in\{S,R,U\}}V_i(u)$。当 $Z_i>0$ 时，将票数归一化：
-
-$$
-q_i(v)=\frac{V_i(v)}{Z_i}
-$$
-
-当 $Z_i=0$ 时，不计算陪审团分数，直接将该声明标记为“不确定”并交由第七步处理。
-
-<!-- 算法审阅待确认：当 Z_i=0 时，本声明没有 ConsensusScore；但第五步仍要求对全部声明的 ConsensusScore 求平均。请确认聚合时应跳过该声明、将其一致性记为 0，还是直接触发拒答。 -->
-
-陪审团一致性由归一化熵计算：
-
-$$
-\operatorname{ConsensusScore}(c_i)=
-1-\frac{H(q_i)}{\log_2 3},\qquad
-H(q_i)=-\sum_v q_i(v)\log_2 q_i(v)
-$$
-
-约定 $0\log_2 0=0$。所有智能体意见一致时得分为 1，三类意见均匀分布时得分为 0。
-
-<!-- 算法审阅待确认：如果所有智能体都选择 U（不确定），则 q_i(U)=1、ConsensusScore=1，因而不会触发第七步的“陪审团严重分歧”条件；但这实际表示全体智能体均无法作出真伪判断。请确认是否需要单独计算“不确定票占比”，并在全体或多数选择 U 时触发拒答。 -->
-
-支持、反驳和不确定的效用权重分别取 $w_S=1$、$w_R=0$、$w_U=0.5$，最终裁决分数为：
-
-$$
-\operatorname{JuryScore}(c_i)=
-\operatorname{ConsensusScore}(c_i)
-\sum_{v\in\{S,R,U\}}w_vq_i(v)
-$$
-
-<!-- 算法审阅待确认：本节将 JuryScore 定义为多智能体的最终裁决分数，但第五步的 MCScore 公式没有使用 JuryScore，陪审团的支持/反驳裁决不会影响综合可信度。请确认 JuryScore 应以独立维度加入 MCScore、用于修正 ContentScore，还是仅作为展示字段。 -->
-
-### (5)多维评分输出与综合可信度
-
-第五步先输出可解释的分项结果，再计算综合可信度。
-
-| 评分维度 | 计算公式 |
-| --- | --- |
-| 内容事实性 | $S_{\mathrm{content}}=\frac{1}{|C|}\sum_i\operatorname{ContentScore}(c_i)$ |
-| 逻辑关系 | $S_{\mathrm{logic}}=\frac{1}{|R|}\sum_{(i,j,rel)\in R}\operatorname{LogicScore}(c_i,c_j,rel)$ |
-| 证据充分性 | $S_{\mathrm{suff}}=\frac{1}{|C|}\sum_i\operatorname{SufficiencyScore}(c_i)$ |
-| 来源可靠性 | $S_{\mathrm{source}}=\frac{1}{|\mathcal{E}|}\sum_{i,j}r_{ij}$ |
-| 来源独立性 | $S_{\mathrm{indep}}=1-\frac{\sum_{i,j}(1-\delta_{ij})}{|\mathcal{E}|}$ |
-| 陪审团一致性 | $S_{\mathrm{consensus}}=\frac{1}{|C|}\sum_i\operatorname{ConsensusScore}(c_i)$ |
-| 不确定性 | $S_{\mathrm{uncertain}}=1-S_{\mathrm{suff}}S_{\mathrm{consensus}}$ |
-
-<!-- 算法审阅待确认：S_uncertain 在此被定义为输出维度，但后续 MCScore、概率校准和拒答条件均未直接使用它。请确认该分数是否只用于展示，或应进入综合评分/拒答规则。另请明确当 |C|=0、|R|=0 或 |E|=0 时各平均值的默认值或回退策略，以避免除零。 -->
-
-来源质量采用可靠性与独立性的乘法耦合，避免多个高可靠但实际同源的转载内容虚增分数。综合可信度为：
-
-$$
-\operatorname{MCScore}=
-\lambda_1S_{\mathrm{content}}+
-\lambda_2S_{\mathrm{logic}}+
-\lambda_3S_{\mathrm{suff}}+
-\lambda_4S_{\mathrm{source}}S_{\mathrm{indep}}
-$$
-
-其中 $\lambda_k\ge 0$ 且 $\sum_{k=1}^{4}\lambda_k=1$。建议初始值为：
-
-$$
-(\lambda_1,\lambda_2,\lambda_3,\lambda_4)=(0.35,0.25,0.20,0.20)
-$$
-
-根据 `MCScore` 输出四标签判定：
-
-<!-- 算法审阅待确认：请明确四标签判定与第二步“证据不足强制标记”和第七步“拒答判定”的执行优先级。建议确认最终输出流程是先计算 MCScore 标签、再由证据门槛或拒答规则覆盖，还是先门控后分配分数标签。 -->
-
-| 分数范围 | 标签 | 含义 |
-| --- | --- | --- |
-| $[0.85,1.00]$ | 确认为真 | 核心声明有充分证据支持，且逻辑关系成立 |
-| $[0.55,0.85)$ | 大体为真但有瑕疵 | 大部分声明成立，但存在局部事实或逻辑问题 |
-| $[0.30,0.55)$ | 信息不足 | 关键声明缺乏充分证据，暂时无法确定真伪 |
-| $[0,0.30)$ | 确认为假 | 核心声明被反驳，或逻辑关系存在根本错误 |
-
-### (6)概率校准
-
-第六步使用温度缩放将原始 `MCScore` 转换为更接近真实正确率的校准概率。为避免数值溢出，先执行边界裁剪：
-
-$$
-\widetilde{p}=\operatorname{clip}(\operatorname{MCScore},\varepsilon,1-\varepsilon)
-$$
-
-然后计算：
-
-$$
-p_{\mathrm{calibrated}}=
-\sigma\left(\frac{\operatorname{logit}(\widetilde{p})}{T}\right),\qquad
-\operatorname{logit}(p)=\ln\frac{p}{1-p}
-$$
-
-温度参数 $T>0$ 在验证集上学习。可使用预期校准误差 ECE 评估校准质量：
-
-$$
-\operatorname{ECE}=
-\sum_{b=1}^{m}\frac{|B_b|}{N}
-\left|\operatorname{acc}(B_b)-\operatorname{conf}(B_b)\right|
-$$
-
-$B_b$ 为第 $b$ 个置信度分箱，$\operatorname{acc}(B_b)$ 为该分箱的实际正确率，$\operatorname{conf}(B_b)$ 为平均预测置信度。`p_calibrated` 用于后续风险控制，不应再把未经校准的 `MCScore` 直接解释为概率。
-
-### (7)拒答判定
-
-第七步通过保形预测和显式安全条件决定“回答”或“拒答”。设校准集包含 $n$ 个非一致性分数 $s_1,\ldots,s_n$，用户允许的错误预算为 $\alpha$，建议取 $0.05$ 至 $0.10$。将分数升序排列后，保形阈值取：
-
-<!-- 算法审阅待确认：符号 α 已在第一步表示 ContentScore 的 sigmoid 参数（建议值 4），此处又表示保形预测错误预算（建议值 0.05～0.10），两者含义和取值冲突。请确认是否将错误预算改记为 α_conf、η 或其他独立符号，并同步加入参数表。 -->
-
-$$
-k=\min\left(n,\left\lceil(n+1)(1-\alpha)\right\rceil\right),\qquad
-\tau=s_{(k)}
-$$
-
-新样本的非一致性分数高于 $\tau$ 时触发拒答。此外，满足以下任一规则也应直接拒答：
-
-1. $S_{\mathrm{suff}}<0.3$：证据不足；
-2. $S_{\mathrm{consensus}}<0.4$：陪审团严重分歧；
-3. $S_{\mathrm{indep}}<0.3$：来源高度依赖；
-4. $p_{\mathrm{calibrated}}<0.35$ 且 $S_{\mathrm{suff}}<0.5$：校准置信度低且证据不足。
-
-触发拒答后，系统输出“暂不能确认”“证据不足”或“建议人工复核”，同时记录触发条件、相关分项分数和证据摘要，不再强行给出确定性的真伪结论。
-
-## 参数维护建议
-
-为避免头文件和实现文件中出现相互矛盾的硬编码，建议将以下参数集中定义在统一配置中，并在验证集上重新估计后再调整：
-
-| 参数 | 建议初始值 | 用途 |
-| --- | ---: | --- |
-| $\theta_\rho$ | 0.20 | 主题相关性过滤阈值 |
-| $\lambda$ | 0.01/天 | 时效性衰减速率 |
-| $\alpha,\beta$ | 4, 2 | 内容分数 sigmoid 参数 |
-| $\gamma$ | 0.50 | 证据充分性缩放参数 |
-| $\theta_{\mathrm{suff}}$ | 0.30 | 信息不足阈值 |
-| $\lambda_1,\lambda_2,\lambda_3,\lambda_4$ | 0.35, 0.25, 0.20, 0.20 | 综合评分权重 |
-| $\varepsilon$ | $10^{-8}$ | 防止除零和 logit 溢出 |
-
-若修改公式、阈值或标签区间，应同步更新对应的头文件注释、实现代码、单元测试和本 README。

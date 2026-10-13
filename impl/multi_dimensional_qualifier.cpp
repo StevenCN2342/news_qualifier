@@ -3,39 +3,74 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <string>
+#include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace chongming::qualifier {
 namespace {
 
-double clamp01(double value) {
-    return std::isfinite(value) ? std::clamp(value, 0.0, 1.0) : 0.0;
+double requireProbability(double value, const char* field_name) {
+    if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
+        throw std::invalid_argument(std::string(field_name) +
+                                    " must be finite and within [0, 1]");
+    }
+    return value;
 }
 
+std::optional<double> checkedProbability(const std::optional<double>& value,
+                                         const char* field_name) {
+    if (!value) return std::nullopt;
+    return requireProbability(*value, field_name);
+}
+
+/** 对可用值求平均；没有可用值时保留 nullopt，而不是伪造中性分。 */
 template <typename Range, typename Projection>
-double averageOr(const Range& values, double fallback, Projection projection) {
-    // 每一种空集合的业务默认值由调用处显式给出，避免隐藏除零行为。
-    if (values.empty()) {
-        return fallback;
-    }
+std::optional<double> averageAvailable(const Range& values,
+                                       Projection projection) {
     double sum = 0.0;
+    std::size_t count = 0;
     for (const auto& value : values) {
-        sum += clamp01(projection(value).value_or(fallback));
+        const std::optional<double> projected = projection(value);
+        if (!projected) continue;
+        sum += *projected;
+        ++count;
     }
-    return sum / static_cast<double>(values.size());
+    if (count == 0) return std::nullopt;
+    return sum / static_cast<double>(count);
 }
 
-CredibilityLabel labelFor(double score) {
-    // 区间边界严格遵循 README 第五步的左闭右开定义。
-    if (score >= 0.85) {
-        return CredibilityLabel::ConfirmedTrue;
+/** 按优化规范计算一个 claim 的来源质量与来源独立性。 */
+std::pair<double, double> sourceDimensions(const ClaimEvaluation& claim) {
+    double source = 0.0;
+    if (!claim.evidence_clusters.empty()) {
+        for (const auto& cluster : claim.evidence_clusters) {
+            const double support =
+                requireProbability(cluster.support, "cluster.support");
+            const double refute =
+                requireProbability(cluster.refute, "cluster.refute");
+            const double neutral =
+                requireProbability(cluster.neutral, "cluster.neutral");
+            source += std::max({support, refute, neutral});
+        }
+        source /= static_cast<double>(claim.evidence_clusters.size());
     }
-    if (score >= 0.55) {
-        return CredibilityLabel::MostlyTrueWithFlaws;
+
+    // evidence_id 在 JSON 层已要求同一 claim 内唯一；这里仍显式去重，保证
+    // 直接使用 C++ API 构造输入时也符合 E_i^unique 的定义。
+    std::unordered_set<std::string> unique_evidence_ids;
+    for (const auto& evidence : claim.evidence) {
+        unique_evidence_ids.insert(evidence.evidence_id);
     }
-    if (score >= 0.30) {
-        return CredibilityLabel::InsufficientInformation;
+
+    double independence = 0.0;
+    if (!unique_evidence_ids.empty()) {
+        independence = static_cast<double>(claim.evidence_clusters.size()) /
+                       static_cast<double>(unique_evidence_ids.size());
+        independence = std::clamp(independence, 0.0, 1.0);
     }
-    return CredibilityLabel::ConfirmedFalse;
+    return {source, independence};
 }
 
 }  // namespace
@@ -43,90 +78,165 @@ CredibilityLabel labelFor(double score) {
 MultiDimensionalQualifier::MultiDimensionalQualifier(
     MultiDimensionalConfig config)
     : config_(config) {
-    const double weights[] = {config_.content_weight, config_.logic_weight,
-                              config_.sufficiency_weight,
-                              config_.source_quality_weight};
+    const double weights[] = {
+        config_.content_weight, config_.logic_weight,
+        config_.sufficiency_weight, config_.jury_weight,
+        config_.source_weight};
     double sum = 0.0;
     for (double weight : weights) {
-        if (!std::isfinite(weight) || weight < 0.0) {
-            throw std::invalid_argument("multi-dimensional weights must be non-negative");
+        if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
+            throw std::invalid_argument(
+                "multi-dimensional weights must be finite and within [0, 1]");
         }
         sum += weight;
     }
     if (std::abs(sum - 1.0) > 1e-9) {
-        throw std::invalid_argument("multi-dimensional weights must sum to one");
+        throw std::invalid_argument(
+            "multi-dimensional weights must sum to one");
+    }
+    if (config_.logic_weight > 0.8) {
+        throw std::invalid_argument(
+            "logic_weight must not exceed 0.8");
     }
 }
 
 MultiDimensionalEvaluation MultiDimensionalQualifier::evaluate(
     const std::vector<ClaimEvaluation>& claims,
-    const std::vector<LogicEvaluation>& relations,
+    const std::vector<ClaimLogicEvaluation>& claim_logic_results,
     const std::vector<JuryEvaluation>& jury_results) const {
     MultiDimensionalEvaluation result;
-    // 没有声明或逻辑关系时保持中性 0.5；没有声明时充分性为 0。
-    result.dimensions.content = averageOr(
-        claims, 0.5, [](const ClaimEvaluation& value) { return value.content_score; });
-    result.dimensions.logic = averageOr(
-        relations, 0.5, [](const LogicEvaluation& value) { return value.score; });
-    result.dimensions.sufficiency = averageOr(
-        claims, 0.0,
-        [](const ClaimEvaluation& value) { return value.sufficiency_score; });
 
-    double reliability_sum = 0.0;
-    double independence_sum = 0.0;
-    std::size_t evidence_count = 0;
-    // evaluate 已经开始执行；即使最终没有证据，这两个质量维度也应定义为 0。
-    result.dimensions.source = 0.0;
-    result.dimensions.independence = 0.0;
-    for (const auto& claim : claims) {
+    // 第三层按 claim_index 关联结果；重复下标通常表示调用方错误，不能静默覆盖。
+    std::vector<const ClaimLogicEvaluation*> logic_by_claim(claims.size(), nullptr);
+    for (const auto& logic : claim_logic_results) {
+        if (logic.claim_index >= claims.size()) {
+            throw std::invalid_argument(
+                "claim logic result references an invalid claim index");
+        }
+        if (logic_by_claim[logic.claim_index] != nullptr) {
+            throw std::invalid_argument(
+                "claim logic results contain a duplicate claim index");
+        }
+        logic_by_claim[logic.claim_index] = &logic;
+    }
+
+    result.claims.reserve(claims.size());
+    for (std::size_t index = 0; index < claims.size(); ++index) {
+        const ClaimEvaluation& claim = claims[index];
+        ClaimMultiDimensionalEvaluation item;
+        item.claim_id = claim.claim_id;
+        item.dimensions.content =
+            checkedProbability(claim.content_score, "claim.content_score");
+        item.dimensions.sufficiency = checkedProbability(
+            claim.sufficiency_score, "claim.sufficiency_score");
+
+        const auto [source, independence] = sourceDimensions(claim);
+        item.dimensions.source = source;
+        item.dimensions.independence = independence;
+
+        const ClaimLogicEvaluation* logic = logic_by_claim[index];
+        if (logic && logic->logic_available) {
+            if (!logic->score) {
+                throw std::invalid_argument(
+                    "an available claim logic result requires a score");
+            }
+            item.dimensions.logic =
+                requireProbability(*logic->score, "claim_logic.score");
+            item.logic_available = true;
+        }
+
+        // 第四层规定：没有有效投票时 jury=0.5、consensus=0，并保留缺失标志。
+        item.dimensions.jury = 0.5;
+        item.dimensions.consensus = 0.0;
+        item.jury_missing = true;
+        if (index < jury_results.size()) {
+            const JuryEvaluation& jury = jury_results[index];
+            item.jury_missing = jury.jury_missing;
+            if (jury.jury_score) {
+                item.dimensions.jury =
+                    requireProbability(*jury.jury_score, "jury.jury_score");
+            }
+            if (jury.consensus_score) {
+                item.dimensions.consensus = requireProbability(
+                    *jury.consensus_score, "jury.consensus_score");
+            }
+        }
+
+        if (item.dimensions.sufficiency && item.dimensions.consensus) {
+            item.dimensions.uncertainty =
+                1.0 - *item.dimensions.sufficiency *
+                          *item.dimensions.consensus;
+        }
+
+        // MC_i 的必要方向和质量输入齐全后才计算；optional 缺失表示前层尚未运行。
+        if (item.dimensions.content && item.dimensions.sufficiency &&
+            item.dimensions.source && item.dimensions.independence &&
+            item.dimensions.jury) {
+            double numerator =
+                config_.content_weight * *item.dimensions.content +
+                config_.sufficiency_weight * *item.dimensions.sufficiency +
+                config_.jury_weight * *item.dimensions.jury +
+                config_.source_weight * *item.dimensions.source *
+                    *item.dimensions.independence;
+            double denominator =
+                config_.content_weight + config_.sufficiency_weight +
+                config_.jury_weight + config_.source_weight;
+
+            // a_i=0 时同时删除逻辑分子和逻辑权重，不能把缺失逻辑当成 0.5。
+            if (item.logic_available) {
+                numerator += config_.logic_weight * *item.dimensions.logic;
+                denominator += config_.logic_weight;
+            }
+            if (denominator <= 0.0) {
+                throw std::logic_error(
+                    "multi-dimensional denominator must be positive");
+            }
+            item.mc_score = std::clamp(numerator / denominator, 0.0, 1.0);
+        }
+
         if (claim.status == ClaimStatus::InsufficientInformation) {
             result.has_insufficient_claims = true;
         }
-        for (const auto& evidence : claim.evidence) {
-            reliability_sum += clamp01(evidence.reliability.value_or(0.0));
-            independence_sum +=
-                clamp01(evidence.independence_discount.value_or(0.0));
-            ++evidence_count;
-        }
-    }
-    if (evidence_count > 0) {
-        // independence 的公式等价于所有 delta_ij 的算术平均。
-        result.dimensions.source =
-            reliability_sum / static_cast<double>(evidence_count);
-        result.dimensions.independence =
-            independence_sum / static_cast<double>(evidence_count);
+        result.claims.push_back(std::move(item));
     }
 
-    // 缺失或零票重的陪审团结果贡献零一致性。这是对 README 中 Z_i=0
-    // 待确认项的保守处理，也确保此类声明会提高最终不确定性。
-    // 没有声明或没有可用陪审团结果时，一致性质量定义为 0。
-    result.dimensions.consensus = 0.0;
-    if (!claims.empty()) {
-        double consensus_sum = 0.0;
-        const std::size_t paired = std::min(claims.size(), jury_results.size());
-        for (std::size_t i = 0; i < paired; ++i) {
-            if (jury_results[i].has_valid_votes) {
-                consensus_sum +=
-                    clamp01(jury_results[i].consensus_score.value_or(0.0));
+    // 顶层字段是逐声明结果的事件级算术平均，便于保留新闻整体输出接口。
+    result.dimensions.content = averageAvailable(
+        result.claims, [](const auto& value) { return value.dimensions.content; });
+    result.dimensions.logic = averageAvailable(
+        result.claims, [](const auto& value) { return value.dimensions.logic; });
+    result.dimensions.sufficiency = averageAvailable(
+        result.claims,
+        [](const auto& value) { return value.dimensions.sufficiency; });
+    result.dimensions.source = averageAvailable(
+        result.claims, [](const auto& value) { return value.dimensions.source; });
+    result.dimensions.independence = averageAvailable(
+        result.claims,
+        [](const auto& value) { return value.dimensions.independence; });
+    result.dimensions.jury = averageAvailable(
+        result.claims, [](const auto& value) { return value.dimensions.jury; });
+    result.dimensions.consensus = averageAvailable(
+        result.claims,
+        [](const auto& value) { return value.dimensions.consensus; });
+    result.dimensions.uncertainty = averageAvailable(
+        result.claims,
+        [](const auto& value) { return value.dimensions.uncertainty; });
+
+    // 任何 claim 未完成 MC_i 时，整体 MC 也保持未定义，避免部分平均掩盖缺失。
+    if (!result.claims.empty()) {
+        bool all_available = true;
+        double sum = 0.0;
+        for (const auto& item : result.claims) {
+            if (!item.mc_score) {
+                all_available = false;
+                break;
             }
+            sum += *item.mc_score;
         }
-        result.dimensions.consensus =
-            consensus_sum / static_cast<double>(claims.size());
+        if (all_available) {
+            result.mc_score = sum / static_cast<double>(result.claims.size());
+        }
     }
-    result.dimensions.uncertainty = clamp01(
-        1.0 - result.dimensions.sufficiency.value_or(0.0) *
-                  result.dimensions.consensus.value_or(0.0));
-
-    // 来源质量采用可靠性与独立性的乘法耦合，防止同源转载虚增总分。
-    result.mc_score = clamp01(
-        config_.content_weight * result.dimensions.content.value_or(0.5) +
-        config_.logic_weight * result.dimensions.logic.value_or(0.5) +
-        config_.sufficiency_weight *
-            result.dimensions.sufficiency.value_or(0.0) +
-        config_.source_quality_weight *
-            result.dimensions.source.value_or(0.0) *
-            result.dimensions.independence.value_or(0.0));
-    result.label = labelFor(result.mc_score.value_or(0.0));
     return result;
 }
 

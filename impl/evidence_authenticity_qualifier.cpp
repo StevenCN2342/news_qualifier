@@ -4,6 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 namespace chongming::qualifier {
 namespace {
@@ -39,31 +40,53 @@ double keywordRelevance(const std::unordered_set<std::string>& claim_keywords,
 }  // namespace
 
 EvidenceAuthenticityConfig::EvidenceAuthenticityConfig()
-    // README“来源可靠性”表中的建议初始值。
-    : source_baselines{{SourceType::OfficialRegistry, 0.90},
-                       {SourceType::Academic, 0.88},
-                       {SourceType::OpenWeb, 0.72},
-                       {SourceType::SocialMedia, 0.72},
-                       {SourceType::NewsMedia, 0.68},
-                       {SourceType::VideoOrGitHub, 0.65},
-                       {SourceType::MarketData, 0.60}} {}
+    // 来源可靠性默认值统一由头文件宏定义提供，避免出现两套默认参数。
+    : source_baselines{
+          {SourceType::OfficialRegistry,
+           EVIDENCE_AUTHENTICITY_QUALIFIER_OFFICIAL_REGISTRY},
+
+          {SourceType::Academic,
+           EVIDENCE_AUTHENTICITY_QUALIFIER_ACADEMIC},
+
+          {SourceType::OpenWeb,
+           EVIDENCE_AUTHENTICITY_QUALIFIER_OPEN_WEB},
+
+          {SourceType::SocialMedia,
+           EVIDENCE_AUTHENTICITY_QUALIFIER_SOCIAL_MEDIA},
+
+          {SourceType::NewsMedia,
+           EVIDENCE_AUTHENTICITY_QUALIFIER_NEWS_MEDIA},
+
+          {SourceType::VideoOrGitHub,
+           EVIDENCE_AUTHENTICITY_QUALIFIER_VIDEO_OR_GITHUB},
+
+          {SourceType::MarketData,
+           EVIDENCE_AUTHENTICITY_QUALIFIER_MARKET_DATA}} {}
 
 EvidenceAuthenticityQualifier::EvidenceAuthenticityQualifier(
     EvidenceAuthenticityConfig config)
     : config_(std::move(config)) {
-    if (config_.relevance_threshold < 0.0 ||
-        config_.relevance_threshold > 1.0 ||
+    if (!std::isfinite(config_.time_decay_per_day) ||
         config_.time_decay_per_day < 0.0 ||
-        config_.sufficiency_gamma < 0.0 ||
-        config_.sufficiency_threshold < 0.0 ||
-        config_.sufficiency_threshold > 1.0) {
+        !std::isfinite(config_.sufficiency_gamma) ||
+        config_.sufficiency_gamma <= 0.0 ||
+        !std::isfinite(config_.reference_cluster_count) ||
+        config_.reference_cluster_count <= 0.0) {
         throw std::invalid_argument("invalid evidence-authenticity configuration");
+    }
+    for (const auto& [source_type, baseline] : config_.source_baselines) {
+        static_cast<void>(source_type);
+        if (!std::isfinite(baseline) || baseline < 0.0 || baseline > 1.0) {
+            throw std::invalid_argument(
+                "source reliability baselines must be within [0, 1]");
+        }
     }
 }
 
 std::vector<EvidenceAssessment> EvidenceAuthenticityQualifier::assess(
     const AtomicClaim& claim) const {
-    // 第一遍先统计原始来源簇规模，第二遍才能为簇中每条证据计算 1/sqrt(n)。
+    // 第一遍先统计原始来源簇规模，第二遍才能为簇中每条证据计算 1/n。
+    // 对全部证据取该值的平均，恰好得到 |G_i|/|E_i^unique|。
     std::unordered_map<std::string, std::size_t> cluster_sizes;
     for (const auto& evidence : claim.evidence) {
         // 没有原始来源 id 时，将证据自身视为独立来源，避免把所有缺失 id 的
@@ -79,6 +102,9 @@ std::vector<EvidenceAssessment> EvidenceAuthenticityQualifier::assess(
     for (const auto& evidence : claim.evidence) {
         EvidenceAssessment item;
         item.evidence_id = evidence.id;
+        item.cluster_id = evidence.original_source_id.empty()
+                              ? std::string{"__evidence__"} + evidence.id
+                              : evidence.original_source_id;
         item.base_reliability = 0.0;
         // 来源缺失或调用方未为该类型配置基线时，可靠性基线保持为 0。
         if (evidence.source_type) {
@@ -102,13 +128,8 @@ std::vector<EvidenceAssessment> EvidenceAuthenticityQualifier::assess(
         item.reliability = clamp01(item.base_reliability.value_or(0.0) *
                                    item.relevance.value_or(0.0) *
                                    item.timeliness.value_or(0.0));
-        const std::string key = evidence.original_source_id.empty()
-                                    ? std::string{"__evidence__"} + evidence.id
-                                    : evidence.original_source_id;
         item.independence_discount =
-            1.0 / std::sqrt(static_cast<double>(cluster_sizes.at(key)));
-        item.filtered_by_relevance =
-            item.relevance.value_or(0.0) < config_.relevance_threshold;
+            1.0 / static_cast<double>(cluster_sizes.at(item.cluster_id));
         item.nli_label = evidence.nli_label;
         item.nli_confidence = clamp01(evidence.nli_confidence);
         result.push_back(std::move(item));
@@ -116,21 +137,48 @@ std::vector<EvidenceAssessment> EvidenceAuthenticityQualifier::assess(
     return result;
 }
 
-double EvidenceAuthenticityQualifier::sufficiencyScore(
+std::vector<EvidenceClusterAssessment>
+EvidenceAuthenticityQualifier::summarizeClusters(
     const std::vector<EvidenceAssessment>& assessments) const {
-    double effective_reliability = 0.0;
+    std::vector<EvidenceClusterAssessment> clusters;
+    std::unordered_map<std::string, std::size_t> cluster_indexes;
     for (const auto& item : assessments) {
-        if (!item.filtered_by_relevance) {
-            // 严格遵循 README 当前公式：中立证据也计入充分性，但已过滤证据不计入。
-            effective_reliability += item.independence_discount.value_or(0.0) *
-                                     item.reliability.value_or(0.0);
+        const auto [position, inserted] =
+            cluster_indexes.emplace(item.cluster_id, clusters.size());
+        if (inserted) {
+            EvidenceClusterAssessment cluster;
+            cluster.cluster_id = item.cluster_id;
+            clusters.push_back(std::move(cluster));
+        }
+
+        auto& cluster = clusters[position->second];
+        const double effective_weight = clamp01(item.reliability.value_or(0.0));
+        switch (item.nli_label) {
+            case NliLabel::Support:
+                cluster.support = std::max(cluster.support, effective_weight);
+                break;
+            case NliLabel::Refute:
+                cluster.refute = std::max(cluster.refute, effective_weight);
+                break;
+            case NliLabel::Neutral:
+                cluster.neutral = std::max(cluster.neutral, effective_weight);
+                break;
         }
     }
-    return clamp01(1.0 - std::exp(-config_.sufficiency_gamma * effective_reliability));
+    return clusters;
 }
 
-double EvidenceAuthenticityQualifier::sufficiencyThreshold() const noexcept {
-    return config_.sufficiency_threshold;
+double EvidenceAuthenticityQualifier::sufficiencyScore(
+    const std::vector<EvidenceClusterAssessment>& clusters) const {
+    double cluster_effective_sum = 0.0;
+    for (const auto& cluster : clusters) {
+        cluster_effective_sum +=
+            std::max({cluster.support, cluster.refute, cluster.neutral});
+    }
+    const double normalized_evidence =
+        cluster_effective_sum / config_.reference_cluster_count;
+    return clamp01(
+        1.0 - std::exp(-config_.sufficiency_gamma * normalized_evidence));
 }
 
 }  // namespace chongming::qualifier

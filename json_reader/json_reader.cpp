@@ -4,6 +4,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <set>
 #include <sstream>
 #include <unordered_map>
 #include <utility>
@@ -393,13 +394,6 @@ const JsonValue& required(const JsonValue::Object& object,
     return iterator->second;
 }
 
-/** 读取可选键；不存在返回 nullptr，存在时仍需由调用方校验其类型。 */
-const JsonValue* optional(const JsonValue::Object& object,
-                          const std::string& key) {
-    const auto iterator = object.find(key);
-    return iterator == object.end() ? nullptr : &iterator->second;
-}
-
 /** 读取字符串；业务 ID 和正文可通过 allow_empty=false 禁止空字符串。 */
 std::string asString(const JsonValue& value,
                      const std::string& source,
@@ -433,7 +427,7 @@ double asProbability(const JsonValue& value,
 
 /**
  * 读取不含小数部分、且能放入 int64_t 的整数。
- * schemaVersion 和 eventDay 共用此规则；eventDay 的纪元由协议双方约定。
+ * schema_version 和 event_day 共用此规则；event_day 的纪元由协议双方约定。
  */
 std::int64_t asInteger(const JsonValue& value,
                        const std::string& source,
@@ -471,18 +465,18 @@ Enum parseEnum(const JsonValue& value,
     return iterator->second;
 }
 
-/** 来源类型的线协议名称与 C++ enum 的唯一映射表。 */
+/** 来源类型的标准蛇形名称与 C++ enum 的唯一映射表。 */
 SourceType parseSourceType(const JsonValue& value,
                            const std::string& source,
                            const std::string& path) {
     static const std::map<std::string, SourceType> names{
-        {"OfficialRegistry", SourceType::OfficialRegistry},
-        {"Academic", SourceType::Academic},
-        {"OpenWeb", SourceType::OpenWeb},
-        {"SocialMedia", SourceType::SocialMedia},
-        {"NewsMedia", SourceType::NewsMedia},
-        {"VideoOrGitHub", SourceType::VideoOrGitHub},
-        {"MarketData", SourceType::MarketData},
+        {"official_registry", SourceType::OfficialRegistry},
+        {"academic", SourceType::Academic},
+        {"open_web", SourceType::OpenWeb},
+        {"social_media", SourceType::SocialMedia},
+        {"news_media", SourceType::NewsMedia},
+        {"video_or_github", SourceType::VideoOrGitHub},
+        {"market_data", SourceType::MarketData},
     };
     return parseEnum(value, names, source, path);
 }
@@ -492,27 +486,21 @@ NliLabel parseNliLabel(const JsonValue& value,
                        const std::string& source,
                        const std::string& path) {
     static const std::map<std::string, NliLabel> names{
-        {"Support", NliLabel::Support},
-        {"Refute", NliLabel::Refute},
-        {"Neutral", NliLabel::Neutral},
+        {"support", NliLabel::Support},
+        {"refute", NliLabel::Refute},
+        {"neutral", NliLabel::Neutral},
     };
     return parseEnum(value, names, source, path);
 }
 
-/** README 第三步全部关系类型的映射表。 */
-RelationType parseRelationType(const JsonValue& value,
-                               const std::string& source,
-                               const std::string& path) {
-    static const std::map<std::string, RelationType> names{
-        {"Temporal", RelationType::Temporal},
-        {"Conditional", RelationType::Conditional},
-        {"Contrast", RelationType::Contrast},
-        {"Parallel", RelationType::Parallel},
-        {"And", RelationType::And},
-        {"Or", RelationType::Or},
-        {"Not", RelationType::Not},
-        {"Implication", RelationType::Implication},
-        {"Causal", RelationType::Causal},
+/** 原子声明拆分规则规定的声明类型；保留规则原文中的中文标准词。 */
+ClaimType parseClaimType(const JsonValue& value,
+                         const std::string& source,
+                         const std::string& path) {
+    static const std::map<std::string, ClaimType> names{
+        {"数值型", ClaimType::Numeric}, {"时间型", ClaimType::Temporal},
+        {"身份型", ClaimType::Identity}, {"地点型", ClaimType::Location},
+        {"存在型", ClaimType::Existence}, {"因果型", ClaimType::Causal},
     };
     return parseEnum(value, names, source, path);
 }
@@ -522,9 +510,9 @@ JuryVerdict parseJuryVerdict(const JsonValue& value,
                              const std::string& source,
                              const std::string& path) {
     static const std::map<std::string, JuryVerdict> names{
-        {"Support", JuryVerdict::Support},
-        {"Refute", JuryVerdict::Refute},
-        {"Uncertain", JuryVerdict::Uncertain},
+        {"support", JuryVerdict::Support},
+        {"refute", JuryVerdict::Refute},
+        {"uncertain", JuryVerdict::Uncertain},
     };
     return parseEnum(value, names, source, path);
 }
@@ -545,37 +533,77 @@ std::unordered_set<std::string> parseKeywords(const JsonValue& value,
     return result;
 }
 
-/**
- * 将一条 evidence JSON 转换为 Evidence。
- *
- * 必填：id、keywords、nliLabel、nliConfidence。
- * 可选：originalSourceId、sourceType、eventDay。sourceType 缺失时保留
- * nullopt，后续可靠性计算会按未知基线处理，而不会冒充任一真实来源类型。
- */
+/** 读取字符串数组；保留输入顺序并拒绝空字符串。 */
+std::vector<std::string> parseStringArray(const JsonValue& value,
+                                          const std::string& source,
+                                          const std::string& path) {
+    std::vector<std::string> result;
+    const auto& array = *asArray(value, source, path);
+    for (std::size_t index = 0; index < array.size(); ++index) {
+        result.push_back(asString(array[index], source,
+                                  path + "[" + std::to_string(index) + "]", false));
+    }
+    return result;
+}
+
+/** 读取规则允许为 null 的字符串；键本身仍必须存在。 */
+std::optional<std::string> parseNullableString(const JsonValue& value,
+                                               const std::string& source,
+                                               const std::string& path) {
+    if (std::holds_alternative<std::nullptr_t>(value.value)) return std::nullopt;
+    return asString(value, source, path, false);
+}
+
+/** 七个中文键必须全部出现；没有对应语义时值为 JSON null。 */
+SevenElements parseSevenElements(const JsonValue& value,
+                                 const std::string& source,
+                                 const std::string& path) {
+    const auto& object = *asObject(value, source, path);
+    SevenElements result;
+    result.subject = parseNullableString(required(object, "主体", source, path),
+                                         source, path + ".主体");
+    result.action = parseNullableString(required(object, "行为", source, path),
+                                        source, path + ".行为");
+    result.object = parseNullableString(required(object, "客体", source, path),
+                                        source, path + ".客体");
+    result.time = parseNullableString(required(object, "时间", source, path),
+                                      source, path + ".时间");
+    result.location = parseNullableString(required(object, "地点", source, path),
+                                          source, path + ".地点");
+    result.quantity = parseNullableString(required(object, "数量", source, path),
+                                          source, path + ".数量");
+    result.result = parseNullableString(required(object, "结果", source, path),
+                                        source, path + ".结果");
+    return result;
+}
+
+/** 将预处理 agent 标准化后的一条 evidence 转换为 Evidence。 */
 Evidence parseEvidence(const JsonValue& value,
                        const std::string& source,
                        const std::string& path) {
     const auto& object = *asObject(value, source, path);
     Evidence result;
-    result.id = asString(required(object, "id", source, path), source,
-                         path + ".id", false);
-    if (const JsonValue* item = optional(object, "originalSourceId")) {
-        result.original_source_id =
-            asString(*item, source, path + ".originalSourceId");
-    }
-    if (const JsonValue* item = optional(object, "sourceType")) {
-        result.source_type = parseSourceType(*item, source, path + ".sourceType");
+    result.id = asString(required(object, "evidence_id", source, path), source,
+                         path + ".evidence_id", false);
+    result.original_source_id = asString(
+        required(object, "original_source_id", source, path), source,
+        path + ".original_source_id");
+    const JsonValue source_type = required(object, "source_type", source, path);
+    if (!std::holds_alternative<std::nullptr_t>(source_type.value)) {
+        result.source_type = parseSourceType(source_type, source,
+                                             path + ".source_type");
     }
     result.keywords = parseKeywords(required(object, "keywords", source, path),
                                     source, path + ".keywords");
-    if (const JsonValue* item = optional(object, "eventDay")) {
-        result.event_day = asInteger(*item, source, path + ".eventDay");
+    const JsonValue event_day = required(object, "event_day", source, path);
+    if (!std::holds_alternative<std::nullptr_t>(event_day.value)) {
+        result.event_day = asInteger(event_day, source, path + ".event_day");
     }
-    result.nli_label = parseNliLabel(required(object, "nliLabel", source, path),
-                                     source, path + ".nliLabel");
+    result.nli_label = parseNliLabel(required(object, "nli_label", source, path),
+                                     source, path + ".nli_label");
     result.nli_confidence = asProbability(
-        required(object, "nliConfidence", source, path), source,
-        path + ".nliConfidence");
+        required(object, "nli_confidence", source, path), source,
+        path + ".nli_confidence");
     return result;
 }
 
@@ -590,18 +618,36 @@ AtomicClaim parseClaim(const JsonValue& value,
                        const std::string& path) {
     const auto& object = *asObject(value, source, path);
     AtomicClaim result;
-    result.id = asString(required(object, "id", source, path), source,
-                         path + ".id", false);
-    result.text = asString(required(object, "text", source, path), source,
-                           path + ".text", false);
+    result.id = asString(required(object, "claim_id", source, path), source,
+                         path + ".claim_id", false);
+    result.text = asString(required(object, "claim_text", source, path), source,
+                           path + ".claim_text", false);
+    result.seven_elements = parseSevenElements(
+        required(object, "seven_elements", source, path), source,
+        path + ".seven_elements");
+    result.check_question = asString(
+        required(object, "check_question", source, path), source,
+        path + ".check_question", false);
+    result.claim_type = parseClaimType(required(object, "claim_type", source, path),
+                                       source, path + ".claim_type");
+    if (result.claim_type == ClaimType::Causal) {
+        fieldError(source, path + ".claim_type",
+                   "a causal statement must be split into two claims and a "
+                   "causal logic edge");
+    }
+    result.entities = parseStringArray(required(object, "entities", source, path),
+                                       source, path + ".entities");
+    result.canon_refs = parseStringArray(required(object, "canon_refs", source, path),
+                                         source, path + ".canon_refs");
     result.keywords = parseKeywords(required(object, "keywords", source, path),
                                     source, path + ".keywords");
-    if (const JsonValue* item = optional(object, "eventDay")) {
-        result.event_day = asInteger(*item, source, path + ".eventDay");
+    const JsonValue event_day = required(object, "event_day", source, path);
+    if (!std::holds_alternative<std::nullptr_t>(event_day.value)) {
+        result.event_day = asInteger(event_day, source, path + ".event_day");
     }
-    if (const JsonValue* item = optional(object, "timeSensitive")) {
-        result.time_sensitive = asBoolean(*item, source, path + ".timeSensitive");
-    }
+    result.time_sensitive = asBoolean(
+        required(object, "time_sensitive", source, path), source,
+        path + ".time_sensitive");
     const auto& evidence = *asArray(required(object, "evidence", source, path),
                                     source, path + ".evidence");
     std::unordered_map<std::string, bool> evidence_ids;
@@ -609,7 +655,8 @@ AtomicClaim parseClaim(const JsonValue& value,
         const std::string item_path = path + ".evidence[" + std::to_string(index) + "]";
         Evidence parsed = parseEvidence(evidence[index], source, item_path);
         if (!evidence_ids.emplace(parsed.id, true).second) {
-            fieldError(source, item_path + ".id", "duplicate evidence id within claim");
+            fieldError(source, item_path + ".evidence_id",
+                       "duplicate evidence id within claim");
         }
         result.evidence.push_back(std::move(parsed));
     }
@@ -629,70 +676,180 @@ std::size_t claimIndex(const std::unordered_map<std::string, std::size_t>& indic
     return iterator->second;
 }
 
-/**
- * 将关系 JSON 转换为 RelationInput。
- *
- * 外部协议使用 leftClaimId/rightClaimId，防止数组重新排序后关系指向错误；
- * 转换完成后保存为当前 claims 数组下标。NOT 是一元关系，因此不要求
- * rightClaimId。
- *
- * 字段约束：
- * - Temporal/Conditional/Contrast/Parallel 在解析成功时必须有 nliScore；
- * - Causal 在解析成功时必须有 causalProbability 和
- *   counterfactualProbability；
- * - And/Or/Not/Implication 直接使用声明分数聚合，不强制额外概率；
- * - parsingSucceeded=false 时后续逻辑层会走多数投票，因此不强制模型分数。
- */
-RelationInput parseRelation(
-    const JsonValue& value,
-    const std::unordered_map<std::string, std::size_t>& indices,
-    const std::string& source,
-    const std::string& path) {
-    const auto& object = *asObject(value, source, path);
-    RelationInput result;
-    const std::string left_id = asString(
-        required(object, "leftClaimId", source, path), source,
-        path + ".leftClaimId", false);
-    result.left_claim = claimIndex(indices, left_id, source, path + ".leftClaimId");
-    result.type = parseRelationType(required(object, "type", source, path),
-                                    source, path + ".type");
-    if (result.type != RelationType::Not) {
-        const std::string right_id = asString(
-            required(object, "rightClaimId", source, path), source,
-            path + ".rightClaimId", false);
-        result.right_claim = claimIndex(indices, right_id, source,
-                                        path + ".rightClaimId");
-    }
-    if (const JsonValue* item = optional(object, "parsingSucceeded")) {
-        result.parsing_succeeded =
-            asBoolean(*item, source, path + ".parsingSucceeded");
-    }
-    if (const JsonValue* item = optional(object, "nliScore")) {
-        result.nli_score = asProbability(*item, source, path + ".nliScore");
-    }
-    if (const JsonValue* item = optional(object, "causalProbability")) {
-        result.causal_probability =
-            asProbability(*item, source, path + ".causalProbability");
-    }
-    if (const JsonValue* item = optional(object, "counterfactualProbability")) {
-        result.counterfactual_probability =
-            asProbability(*item, source, path + ".counterfactualProbability");
-    }
-    if (result.parsing_succeeded && result.type == RelationType::Causal &&
-        (!optional(object, "causalProbability") ||
-         !optional(object, "counterfactualProbability"))) {
-        fieldError(source, path,
-                   "a parsed Causal relation requires causalProbability and "
-                   "counterfactualProbability");
-    }
-    const bool uses_nli = result.type == RelationType::Temporal ||
-                          result.type == RelationType::Conditional ||
-                          result.type == RelationType::Contrast ||
-                          result.type == RelationType::Parallel;
-    if (result.parsing_succeeded && uses_nli && !optional(object, "nliScore")) {
-        fieldError(source, path, "this parsed relation type requires nliScore");
+/** 把 S_* 标准名转换为算法枚举；不在解析器内猜测同义词。 */
+RelationDimension parseDimension(const JsonValue& value,
+                                 const std::string& source,
+                                 const std::string& path) {
+    static const std::map<std::string, RelationDimension> names{
+        {"S_time", RelationDimension::Time},
+        {"S_mech", RelationDimension::Mechanism},
+        {"S_counter", RelationDimension::Counterfactual},
+        {"S_confound", RelationDimension::Confounder},
+        {"S_dose", RelationDimension::DoseResponse},
+        {"S_contrast", RelationDimension::Contrast},
+        {"S_coordinate", RelationDimension::Coordinate},
+    };
+    return parseEnum(value, names, source, path);
+}
+
+std::vector<RelationDimension> parseDimensions(const JsonValue& value,
+                                               const std::string& source,
+                                               const std::string& path) {
+    std::vector<RelationDimension> result;
+    std::set<RelationDimension> unique;
+    const auto& array = *asArray(value, source, path);
+    for (std::size_t index = 0; index < array.size(); ++index) {
+        RelationDimension item = parseDimension(
+            array[index], source, path + "[" + std::to_string(index) + "]");
+        if (!unique.insert(item).second) {
+            fieldError(source, path, "required_dimensions contains a duplicate");
+        }
+        result.push_back(item);
     }
     return result;
+}
+
+void requireDimensions(const std::vector<RelationDimension>& actual,
+                       std::initializer_list<RelationDimension> expected,
+                       const std::string& source,
+                       const std::string& path) {
+    if (std::set<RelationDimension>(actual.begin(), actual.end()) !=
+        std::set<RelationDimension>(expected.begin(), expected.end())) {
+        fieldError(source, path,
+                   "dimensions do not exactly match those required by rel");
+    }
+}
+
+double dimensionScore(const JsonValue::Object& scores,
+                      const std::string& key,
+                      const std::string& source,
+                      const std::string& path) {
+    return asProbability(required(scores, key, source, path), source,
+                         path + "." + key);
+}
+
+/** dimension_scores 只允许出现当前关系实际需要的键。 */
+void requireScoreKeys(const JsonValue::Object& scores,
+                      std::initializer_list<std::string> expected,
+                      const std::string& source,
+                      const std::string& path) {
+    std::set<std::string> actual;
+    for (const auto& item : scores) actual.insert(item.first);
+    if (actual != std::set<std::string>(expected.begin(), expected.end())) {
+        fieldError(source, path,
+                   "score keys do not exactly match required_dimensions");
+    }
+}
+
+/**
+ * 将一条标准 logic_edges 记录路由到语义关系或因果聚合。
+ * required_dimensions 与 rel 必须严格匹配，避免维度遗漏后仍进入算法。
+ */
+void parseLogicEdge(const JsonValue& value,
+                    const std::unordered_map<std::string, std::size_t>& indices,
+                    const std::string& source,
+                    const std::string& path,
+                    QualifierRequest& request) {
+    const auto& object = *asObject(value, source, path);
+    const std::string edge_id = asString(
+        required(object, "edge_id", source, path), source, path + ".edge_id", false);
+    const std::string left_id = asString(
+        required(object, "claim_i", source, path), source, path + ".claim_i", false);
+    const std::string right_id = asString(
+        required(object, "claim_j", source, path), source, path + ".claim_j", false);
+    const std::size_t left = claimIndex(indices, left_id, source, path + ".claim_i");
+    const std::size_t right = claimIndex(indices, right_id, source, path + ".claim_j");
+    if (left == right) fieldError(source, path, "a logic edge must connect two claims");
+
+    const std::string rel = asString(required(object, "rel", source, path),
+                                     source, path + ".rel", false);
+    const auto dimensions = parseDimensions(
+        required(object, "required_dimensions", source, path), source,
+        path + ".required_dimensions");
+    const auto& scores = *asObject(
+        required(object, "dimension_scores", source, path), source,
+        path + ".dimension_scores");
+    const double nli_score = asProbability(
+        required(object, "nli_score", source, path), source, path + ".nli_score");
+
+    if (rel == "causal") {
+        requireDimensions(dimensions,
+                          {RelationDimension::Time, RelationDimension::Mechanism,
+                           RelationDimension::Counterfactual,
+                           RelationDimension::Confounder,
+                           RelationDimension::DoseResponse},
+                          source, path + ".required_dimensions");
+        requireScoreKeys(scores,
+                         {"S_time", "S_mech", "S_counter", "S_confound",
+                          "S_dose"},
+                         source, path + ".dimension_scores");
+        AggregationInput result;
+        result.edge_id = edge_id;
+        result.left_claim = left;
+        result.right_claim = right;
+        result.type = AggregationType::Causal;
+        result.required_dimensions = dimensions;
+        result.nli_score = nli_score;
+        result.causal_factors.temporal_order = dimensionScore(
+            scores, "S_time", source, path + ".dimension_scores");
+        result.causal_factors.mechanism = dimensionScore(
+            scores, "S_mech", source, path + ".dimension_scores");
+        result.causal_factors.counterfactual_support = dimensionScore(
+            scores, "S_counter", source, path + ".dimension_scores");
+        result.causal_factors.confounder_control = dimensionScore(
+            scores, "S_confound", source, path + ".dimension_scores");
+        result.causal_factors.dose_response = dimensionScore(
+            scores, "S_dose", source, path + ".dimension_scores");
+        request.aggregations.push_back(std::move(result));
+        return;
+    }
+
+    RelationInput result;
+    result.edge_id = edge_id;
+    result.left_claim = left;
+    result.right_claim = right;
+    result.required_dimensions = dimensions;
+    result.nli_score = nli_score;
+    if (rel == "temporal") {
+        result.type = RelationType::Temporal;
+        requireDimensions(dimensions, {RelationDimension::Time}, source,
+                          path + ".required_dimensions");
+        requireScoreKeys(scores, {"S_time"}, source,
+                         path + ".dimension_scores");
+        result.dimension_scores.temporal_order = dimensionScore(
+            scores, "S_time", source, path + ".dimension_scores");
+    } else if (rel == "conditional") {
+        result.type = RelationType::Conditional;
+        requireDimensions(dimensions,
+                          {RelationDimension::Mechanism,
+                           RelationDimension::Counterfactual},
+                          source, path + ".required_dimensions");
+        requireScoreKeys(scores, {"S_mech", "S_counter"}, source,
+                         path + ".dimension_scores");
+        result.dimension_scores.mechanism = dimensionScore(
+            scores, "S_mech", source, path + ".dimension_scores");
+        result.dimension_scores.counterfactual_support = dimensionScore(
+            scores, "S_counter", source, path + ".dimension_scores");
+    } else if (rel == "contrast") {
+        result.type = RelationType::Contrast;
+        requireDimensions(dimensions, {RelationDimension::Contrast}, source,
+                          path + ".required_dimensions");
+        requireScoreKeys(scores, {"S_contrast"}, source,
+                         path + ".dimension_scores");
+        result.dimension_scores.contrast = dimensionScore(
+            scores, "S_contrast", source, path + ".dimension_scores");
+    } else if (rel == "coordinate") {
+        result.type = RelationType::Parallel;
+        requireDimensions(dimensions, {RelationDimension::Coordinate}, source,
+                          path + ".required_dimensions");
+        requireScoreKeys(scores, {"S_coordinate"}, source,
+                         path + ".dimension_scores");
+        result.dimension_scores.coordinate = dimensionScore(
+            scores, "S_coordinate", source, path + ".dimension_scores");
+    } else {
+        fieldError(source, path + ".rel", "unsupported enum value '" + rel + "'");
+    }
+    request.relations.push_back(std::move(result));
 }
 
 /**
@@ -707,20 +864,20 @@ JurorOpinion parseOpinion(const JsonValue& value,
     result.verdict = parseJuryVerdict(required(object, "verdict", source, path),
                                       source, path + ".verdict");
     result.hybrid_retrieval_score = asProbability(
-        required(object, "hybridRetrievalScore", source, path), source,
-        path + ".hybridRetrievalScore");
+        required(object, "hybrid_retrieval_score", source, path), source,
+        path + ".hybrid_retrieval_score");
     result.confidence = asProbability(
         required(object, "confidence", source, path), source,
         path + ".confidence");
     result.completed_without_error = asBoolean(
-        required(object, "completedWithoutError", source, path), source,
-        path + ".completedWithoutError");
+        required(object, "completed_without_error", source, path), source,
+        path + ".completed_without_error");
     return result;
 }
 
 /**
  * 读取“一条声明 → 多名陪审员意见”的分组。
- * claimId 只负责外部关联，不写入 JurorOpinion，避免每条意见重复存储相同 ID。
+ * claim_id 只负责外部关联，不写入 JurorOpinion，避免每条意见重复存储相同 ID。
  */
 ClaimJuryOpinions parseClaimOpinions(
     const JsonValue& value,
@@ -729,9 +886,9 @@ ClaimJuryOpinions parseClaimOpinions(
     const std::string& path) {
     const auto& object = *asObject(value, source, path);
     ClaimJuryOpinions result;
-    result.claim_id = asString(required(object, "claimId", source, path), source,
-                               path + ".claimId", false);
-    claimIndex(indices, result.claim_id, source, path + ".claimId");
+    result.claim_id = asString(required(object, "claim_id", source, path), source,
+                               path + ".claim_id", false);
+    claimIndex(indices, result.claim_id, source, path + ".claim_id");
     const auto& opinions = *asArray(required(object, "opinions", source, path),
                                     source, path + ".opinions");
     for (std::size_t index = 0; index < opinions.size(); ++index) {
@@ -745,58 +902,96 @@ ClaimJuryOpinions parseClaimOpinions(
 /**
  * 将完整根对象转换为 QualifierRequest。
  *
- * 转换顺序必须是 claims → relations → juryOpinions：后两者都需要第一步创建
- * 的 claim id 索引。relations 和 juryOpinions 缺失时等价于空集合，但
- * schemaVersion、requestId、claims 是协议级必填字段。
+ * 转换顺序必须从 atomic_claims 开始：logic_edges 和 jury_opinions 都需要
+ * 第一阶段创建的 claim id 索引。schema_version=3 表示输入已经过预处理
+ * agent 的同义词标准化与评分字段补齐。
  */
 QualifierRequest parseRequest(const JsonValue& root, const std::string& source) {
     const auto& object = *asObject(root, source, "$");
     QualifierRequest result;
     result.schema_version = asInteger(
-        required(object, "schemaVersion", source, "$"), source,
-        "$.schemaVersion");
-    if (result.schema_version != 1) {
-        fieldError(source, "$.schemaVersion", "only schemaVersion 1 is supported");
+        required(object, "schema_version", source, "$"), source,
+        "$.schema_version");
+    if (result.schema_version != 3) {
+        fieldError(source, "$.schema_version",
+                   "only schema_version 3 is supported");
     }
-    result.request_id = asString(required(object, "requestId", source, "$"), source,
-                                 "$.requestId", false);
+    result.request_id = asString(required(object, "request_id", source, "$"), source,
+                                 "$.request_id", false);
+    result.event_id = asString(required(object, "event_id", source, "$"), source,
+                               "$.event_id", false);
+    result.original_text = asString(required(object, "original_text", source, "$"),
+                                    source, "$.original_text", false);
+    result.source = asString(required(object, "source", source, "$"), source,
+                             "$.source", false);
+    result.publish_date = asString(required(object, "publish_date", source, "$"),
+                                   source, "$.publish_date", false);
+    result.event_nature = asString(required(object, "event_nature", source, "$"),
+                                   source, "$.event_nature", false);
+    result.domain = asString(required(object, "domain", source, "$"), source,
+                             "$.domain", false);
+    result.event_time = asString(required(object, "event_time", source, "$"), source,
+                                 "$.event_time", false);
+    result.seven_elements = parseSevenElements(
+        required(object, "seven_elements", source, "$"), source,
+        "$.seven_elements");
 
-    const auto& claims = *asArray(required(object, "claims", source, "$"), source,
-                                  "$.claims");
+    const auto& claims = *asArray(
+        required(object, "atomic_claims", source, "$"), source,
+        "$.atomic_claims");
+    if (claims.size() < 2 || claims.size() > 5) {
+        fieldError(source, "$.atomic_claims",
+                   "the splitting rule requires 2 to 5 claims");
+    }
     // indices 同时完成声明 ID 唯一性检查，并供关系/陪审团分组解析使用。
     std::unordered_map<std::string, std::size_t> indices;
     for (std::size_t index = 0; index < claims.size(); ++index) {
-        const std::string path = "$.claims[" + std::to_string(index) + "]";
+        const std::string path = "$.atomic_claims[" + std::to_string(index) + "]";
         AtomicClaim claim = parseClaim(claims[index], source, path);
         if (!indices.emplace(claim.id, index).second) {
-            fieldError(source, path + ".id", "duplicate claim id");
+            fieldError(source, path + ".claim_id", "duplicate claim id");
         }
         result.claims.push_back(std::move(claim));
     }
 
-    if (const JsonValue* relations_value = optional(object, "relations")) {
-        const auto& relations = *asArray(*relations_value, source, "$.relations");
-        for (std::size_t index = 0; index < relations.size(); ++index) {
-            result.relations.push_back(parseRelation(
-                relations[index], indices, source,
-                "$.relations[" + std::to_string(index) + "]"));
+    const auto& edges = *asArray(
+        required(object, "logic_edges", source, "$"), source, "$.logic_edges");
+    if (edges.empty() || edges.size() > 4) {
+        fieldError(source, "$.logic_edges",
+                   "the splitting rule requires 1 to 4 logic edges");
+    }
+    std::set<std::string> edge_ids;
+    for (std::size_t index = 0; index < edges.size(); ++index) {
+        const std::string path = "$.logic_edges[" + std::to_string(index) + "]";
+        const auto& edge_object = *asObject(edges[index], source, path);
+        const std::string edge_id = asString(
+            required(edge_object, "edge_id", source, path), source,
+            path + ".edge_id", false);
+        if (!edge_ids.insert(edge_id).second) {
+            fieldError(source, path + ".edge_id", "duplicate edge id");
         }
+        parseLogicEdge(edges[index], indices, source, path, result);
     }
 
-    if (const JsonValue* opinions_value = optional(object, "juryOpinions")) {
-        const auto& groups = *asArray(*opinions_value, source, "$.juryOpinions");
-        // 每条声明最多出现一个分组；一个分组内部可以有任意数量的意见。
-        std::unordered_map<std::string, bool> grouped_claims;
-        for (std::size_t index = 0; index < groups.size(); ++index) {
-            const std::string path = "$.juryOpinions[" + std::to_string(index) + "]";
-            ClaimJuryOpinions group =
-                parseClaimOpinions(groups[index], indices, source, path);
-            if (!grouped_claims.emplace(group.claim_id, true).second) {
-                fieldError(source, path + ".claimId",
-                           "duplicate jury-opinion group for claim");
-            }
-            result.jury_opinions.push_back(std::move(group));
+    const auto& groups = *asArray(
+        required(object, "jury_opinions", source, "$"), source,
+        "$.jury_opinions");
+    // 每条声明最多出现一个分组；没有意见时仍可提交空数组，供第四层识别缺失。
+    std::unordered_map<std::string, bool> grouped_claims;
+    for (std::size_t index = 0; index < groups.size(); ++index) {
+        const std::string path = "$.jury_opinions[" + std::to_string(index) + "]";
+        ClaimJuryOpinions group =
+            parseClaimOpinions(groups[index], indices, source, path);
+        if (!grouped_claims.emplace(group.claim_id, true).second) {
+            fieldError(source, path + ".claim_id",
+                       "duplicate jury-opinion group for claim");
         }
+        result.jury_opinions.push_back(std::move(group));
+    }
+    if (grouped_claims.size() != result.claims.size()) {
+        fieldError(source, "$.jury_opinions",
+                   "every atomic claim requires one jury group; use an empty "
+                   "opinions array when no jury output is available");
     }
     return result;
 }
@@ -840,7 +1035,7 @@ QualifierRequest JsonReader::readFile(const std::filesystem::path& path) {
 
 QualifierRequest JsonReader::readString(const std::string& json,
                                         const std::string& source_name) {
-    // 先完成纯语法解析，再做 schemaVersion 和各业务字段校验。
+    // 先完成纯语法解析，再做 schema_version 和各业务字段校验。
     Parser parser(json, source_name);
     return parseRequest(parser.parseDocument(), source_name);
 }
