@@ -414,13 +414,13 @@ ModelConfig parseConfig(const JsonValue& root, const std::string& source) {
         required(object, "calibration_status", source, "$"), source,
         "$.calibration_status");
 
-    if (result.algorithm_version != "mc-score-optimized-v1") {
+    if (result.algorithm_version != "0") {
         fieldError(source, "$.algorithm_version",
-                   "only mc-score-optimized-v1 is supported");
+                   "only algorithm version 0 is supported");
     }
-    if (result.input_schema_version != 3) {
+    if (result.input_schema_version != 0) {
         fieldError(source, "$.input_schema_version",
-                   "only input schema version 3 is supported");
+                   "only input schema version 0 is supported");
     }
 
     const auto& optimized = asObject(

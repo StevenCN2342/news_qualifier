@@ -18,9 +18,9 @@ QualifierPipeline::QualifierPipeline(const ModelConfig& config)
       conformal_threshold_(config.conformal_threshold) {}
 
 QualifierResult QualifierPipeline::run(const QualifierRequest& request) const {
-    if (request.schema_version != 3) {
+    if (request.schema_version != 0) {
         throw QualifierPipelineError(
-            "QualifierPipeline only accepts input schema version 3");
+            "QualifierPipeline only accepts input schema version 0");
     }
     if (request.claims.empty()) {
         throw QualifierPipelineError("request contains no atomic claims");

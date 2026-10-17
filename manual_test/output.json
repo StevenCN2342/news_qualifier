@@ -1,0 +1,385 @@
+{
+  "schema_version": 0,
+  "request_id": "REQ-001",
+  "event_id": "EV001",
+  "original_text": "2026年9月，因某州政府削减教育预算，导致当地学校关闭。",
+  "source": "示例新闻",
+  "publish_date": "2026-09-27",
+  "event_nature": "待核查",
+  "domain": "社会民生与文体教育",
+  "event_time": "2026-09",
+  "seven_elements": {
+    "主体": "某州政府",
+    "行为": "削减教育预算",
+    "客体": "教育预算",
+    "时间": "2026年9月",
+    "地点": null,
+    "数量": null,
+    "结果": "学校关闭"
+  },
+  "atomic_claims": [
+    {
+      "claim_id": "C001",
+      "claim_text": "某州政府在2026年9月削减了教育预算。",
+      "seven_elements": {
+        "主体": "某州政府",
+        "行为": "削减",
+        "客体": "教育预算",
+        "时间": "2026年9月",
+        "地点": null,
+        "数量": null,
+        "结果": "教育预算减少"
+      },
+      "check_question": "某州政府是否在2026年9月削减了教育预算？",
+      "claim_type": "存在型",
+      "entities": [
+        "某州政府",
+        "教育预算"
+      ],
+      "canon_refs": [],
+      "keywords": [
+        "削减",
+        "政府",
+        "教育预算"
+      ],
+      "event_day": 20715,
+      "time_sensitive": true,
+      "evidence": [
+        {
+          "evidence_id": "D001",
+          "original_source_id": "ORIGIN-001",
+          "source_type": "official_registry",
+          "keywords": [
+            "削减",
+            "政府",
+            "教育预算"
+          ],
+          "event_day": 20715,
+          "nli_label": "support",
+          "nli_confidence": 0.91000000000000003
+        }
+      ]
+    },
+    {
+      "claim_id": "C002",
+      "claim_text": "当地学校在预算削减后关闭。",
+      "seven_elements": {
+        "主体": "当地学校",
+        "行为": "关闭",
+        "客体": null,
+        "时间": "预算削减后",
+        "地点": null,
+        "数量": null,
+        "结果": "学校关闭"
+      },
+      "check_question": "当地学校是否在预算削减后关闭？",
+      "claim_type": "存在型",
+      "entities": [
+        "当地学校"
+      ],
+      "canon_refs": [],
+      "keywords": [
+        "关闭",
+        "学校"
+      ],
+      "event_day": null,
+      "time_sensitive": false,
+      "evidence": []
+    }
+  ],
+  "logic_edges": [
+    {
+      "edge_id": "E001",
+      "claim_i": "C001",
+      "claim_j": "C002",
+      "rel": "causal",
+      "required_dimensions": [
+        "S_time",
+        "S_mech",
+        "S_counter",
+        "S_confound",
+        "S_dose"
+      ],
+      "dimension_scores": {
+        "S_time": 0.88,
+        "S_mech": 0.71999999999999997,
+        "S_counter": 0.60999999999999999,
+        "S_confound": 0.55000000000000004,
+        "S_dose": 0.40000000000000002
+      },
+      "nli_score": 0.81000000000000005
+    }
+  ],
+  "jury_opinions": [
+    {
+      "claim_id": "C001",
+      "opinions": [
+        {
+          "verdict": "support",
+          "hybrid_retrieval_score": 0.85999999999999999,
+          "confidence": 0.90000000000000002,
+          "completed_without_error": true
+        }
+      ]
+    },
+    {
+      "claim_id": "C002",
+      "opinions": []
+    }
+  ],
+  "qualification_result": {
+    "algorithm_version": "0",
+    "input_schema_version": 0,
+    "config_version": "0",
+    "calibration_status": "unvalidated",
+    "calculated_at": "2026-10-13T04:29:15Z",
+    "layer_1_evidence_authenticity": {
+      "claims": [
+        {
+          "claim_id": "C001",
+          "evidence": [
+            {
+              "evidence_id": "D001",
+              "cluster_id": "ORIGIN-001",
+              "base_reliability": 0.90000000000000002,
+              "relevance": 1,
+              "timeliness": 1,
+              "reliability": 0.90000000000000002,
+              "independence_discount": 1,
+              "nli_label": "support",
+              "nli_confidence": 0.91000000000000003
+            }
+          ]
+        },
+        {
+          "claim_id": "C002",
+          "evidence": []
+        }
+      ]
+    },
+    "layer_2_evidence_sufficiency": {
+      "claims": [
+        {
+          "claim_id": "C001",
+          "evidence_clusters": [
+            {
+              "cluster_id": "ORIGIN-001",
+              "support": 0.90000000000000002,
+              "refute": 0,
+              "neutral": 0
+            }
+          ],
+          "support_strength": 0.90000000000000002,
+          "refute_strength": 0,
+          "direction": 0.99999998888888897,
+          "content_score": 0.98201378925289928,
+          "sufficiency_score": 0.13929202357494219,
+          "status": "determinate"
+        },
+        {
+          "claim_id": "C002",
+          "evidence_clusters": [],
+          "support_strength": 0,
+          "refute_strength": 0,
+          "direction": 0,
+          "content_score": 0.5,
+          "sufficiency_score": 0,
+          "status": "insufficient_information"
+        }
+      ]
+    },
+    "layer_3_logic_relationship": {
+      "edges": [
+        {
+          "edge_id": "E001",
+          "claim_i": "C001",
+          "claim_j": "C002",
+          "relation_type": "causal",
+          "logic_score": 0.51192000000000015,
+          "logic_available": true
+        }
+      ],
+      "claims": [
+        {
+          "claim_id": "C001",
+          "logic_score": 0.51192000000000015,
+          "logic_available": true,
+          "contributing_edge_count": 1
+        },
+        {
+          "claim_id": "C002",
+          "logic_score": 0.51192000000000015,
+          "logic_available": true,
+          "contributing_edge_count": 1
+        }
+      ]
+    },
+    "layer_4_jury_evaluation": {
+      "claims": [
+        {
+          "claim_id": "C001",
+          "has_valid_votes": true,
+          "jury_missing": false,
+          "vote_distribution": {
+            "support": 1,
+            "refute": 0,
+            "uncertain": 0
+          },
+          "direction": 0.99999998770894793,
+          "consensus_score": 1,
+          "jury_score": 0.99999999385447391,
+          "uncertain_vote_share": 0
+        },
+        {
+          "claim_id": "C002",
+          "has_valid_votes": false,
+          "jury_missing": true,
+          "vote_distribution": null,
+          "direction": 0,
+          "consensus_score": 0,
+          "jury_score": 0.5,
+          "uncertain_vote_share": null
+        }
+      ]
+    },
+    "layer_5_multi_dimensional_aggregation": {
+      "claims": [
+        {
+          "claim_id": "C001",
+          "dimensions": {
+            "content": 0.98201378925289928,
+            "logic": 0.51192000000000015,
+            "sufficiency": 0.13929202357494219,
+            "source": 0.90000000000000002,
+            "independence": 1,
+            "jury": 0.99999999385447391,
+            "consensus": 1,
+            "uncertainty": 0.86070797642505781
+          },
+          "logic_available": true,
+          "jury_missing": false,
+          "mc_score": 0.70664516133646316
+        },
+        {
+          "claim_id": "C002",
+          "dimensions": {
+            "content": 0.5,
+            "logic": 0.51192000000000015,
+            "sufficiency": 0,
+            "source": 0,
+            "independence": 0,
+            "jury": 0.5,
+            "consensus": 0,
+            "uncertainty": 1
+          },
+          "logic_available": true,
+          "jury_missing": true,
+          "mc_score": 0.30238400000000004
+        }
+      ],
+      "event_summary": {
+        "dimensions": {
+          "content": 0.74100689462644964,
+          "logic": 0.51192000000000015,
+          "sufficiency": 0.069646011787471096,
+          "source": 0.45000000000000001,
+          "independence": 0.5,
+          "jury": 0.74999999692723696,
+          "consensus": 0.5,
+          "uncertainty": 0.9303539882125289
+        },
+        "mc_score": 0.50451458066823163,
+        "has_insufficient_claims": true
+      }
+    },
+    "layer_6_probability_calibration": {
+      "claims": [
+        {
+          "claim_id": "C001",
+          "directional_sufficiency": 0.13929202202725305,
+          "logic_for_mapping": 0.51192000000000015,
+          "uncalibrated_probabilities": {
+            "confirmed_true": 0.050388302687034918,
+            "mostly_true": 0.048041730691295491,
+            "insufficient_information": 0.8607079779727469,
+            "confirmed_false": 0.04086198864892264
+          },
+          "calibrated_probabilities": {
+            "confirmed_true": 0.050388310671502491,
+            "mostly_true": 0.048041738769625947,
+            "insufficient_information": 0.86070795354442864,
+            "confirmed_false": 0.04086199701444275
+          },
+          "predicted_label": "insufficient_information"
+        },
+        {
+          "claim_id": "C002",
+          "directional_sufficiency": 0,
+          "logic_for_mapping": 0.51192000000000015,
+          "uncalibrated_probabilities": {
+            "confirmed_true": 0,
+            "mostly_true": 0,
+            "insufficient_information": 1,
+            "confirmed_false": 0
+          },
+          "calibrated_probabilities": {
+            "confirmed_true": 9.9999995999999885e-09,
+            "mostly_true": 9.9999995999999885e-09,
+            "insufficient_information": 0.99999997000000107,
+            "confirmed_false": 9.9999995999999885e-09
+          },
+          "predicted_label": "insufficient_information"
+        }
+      ]
+    },
+    "layer_7_conformal_rejection": {
+      "threshold": {
+        "value": 0.34999999999999998,
+        "is_infinite": false,
+        "family_count": 20,
+        "rank": 20
+      },
+      "claims": [
+        {
+          "claim_id": "C001",
+          "prediction_set": [
+            "insufficient_information"
+          ],
+          "accepted_label": "insufficient_information",
+          "should_reject": false,
+          "reasons": [],
+          "suggested_message": ""
+        },
+        {
+          "claim_id": "C002",
+          "prediction_set": [
+            "insufficient_information"
+          ],
+          "accepted_label": "insufficient_information",
+          "should_reject": false,
+          "reasons": [],
+          "suggested_message": ""
+        }
+      ]
+    },
+    "answer_agent_input": {
+      "claim_decisions": [
+        {
+          "claim_id": "C001",
+          "should_answer": true,
+          "label": "insufficient_information",
+          "probability": 0.86070795354442864,
+          "suggested_message": ""
+        },
+        {
+          "claim_id": "C002",
+          "should_answer": true,
+          "label": "insufficient_information",
+          "probability": 0.99999997000000107,
+          "suggested_message": ""
+        }
+      ],
+      "event_has_rejected_claims": false
+    }
+  }
+}

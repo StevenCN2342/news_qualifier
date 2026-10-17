@@ -37,7 +37,7 @@ struct QualifierResult {
 struct QualifierResponse {
     QualifierRequest request;
     QualifierResult result;
-    std::string algorithm_version{"mc-score-optimized-v1"};
+    std::string algorithm_version{"0"};
     std::string config_version;
     std::string calibration_status;
     // 建议使用带时区的 ISO 8601 字符串；写出器只负责原样保存。

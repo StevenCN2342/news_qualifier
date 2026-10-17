@@ -22,7 +22,7 @@ struct ClaimJuryOpinions {
  * news_qualifier 子进程的一次完整输入。
  *
  * JSON 协议使用稳定的 claim id；JsonReader 会在读取逻辑边时把 id 转换为
- * 算法所需的 claims 数组下标。当前只接受预处理 agent 输出的 schema_version=3。
+ * 算法所需的 claims 数组下标。当前只接受预处理 agent 输出的 schema_version=0。
  */
 struct QualifierRequest {
     std::int64_t schema_version{0};

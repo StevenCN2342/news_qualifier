@@ -1,7 +1,7 @@
 {
-  "model_version": "smoke-test-infinite-unvalidated",
-  "algorithm_version": "mc-score-optimized-v1",
-  "input_schema_version": 3,
+  "model_version": "0",
+  "algorithm_version": "0",
+  "input_schema_version": 0,
   "calibration_status": "unvalidated",
   "optimized_parameters": {
     "sigmoid_alpha": 4.0,

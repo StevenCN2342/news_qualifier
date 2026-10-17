@@ -903,7 +903,7 @@ ClaimJuryOpinions parseClaimOpinions(
  * 将完整根对象转换为 QualifierRequest。
  *
  * 转换顺序必须从 atomic_claims 开始：logic_edges 和 jury_opinions 都需要
- * 第一阶段创建的 claim id 索引。schema_version=3 表示输入已经过预处理
+ * 第一阶段创建的 claim id 索引。schema_version=0 表示输入已经过预处理
  * agent 的同义词标准化与评分字段补齐。
  */
 QualifierRequest parseRequest(const JsonValue& root, const std::string& source) {
@@ -912,9 +912,9 @@ QualifierRequest parseRequest(const JsonValue& root, const std::string& source) 
     result.schema_version = asInteger(
         required(object, "schema_version", source, "$"), source,
         "$.schema_version");
-    if (result.schema_version != 3) {
+    if (result.schema_version != 0) {
         fieldError(source, "$.schema_version",
-                   "only schema_version 3 is supported");
+                   "only schema_version 0 is supported");
     }
     result.request_id = asString(required(object, "request_id", source, "$"), source,
                                  "$.request_id", false);

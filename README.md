@@ -17,7 +17,7 @@
 | 模块 | 职责 |
 | --- | --- |
 | 工作 Agent | 事实拆分、证据检索、NLI、关系判断和陪审团意见 |
-| 预处理 Agent | 补齐字段、统一同义词、转换枚举并生成 `schema_version=3` JSON |
+| 预处理 Agent | 补齐字段、统一同义词、转换枚举并生成 `schema_version=0` JSON |
 | `news_qualifier` | 七层确定性计算、概率校准、conformal 拒答和结果序列化 |
 | 回答 Agent | 根据 `answer_agent_input` 生成自然语言回答，不绕过拒答决定 |
 
@@ -30,7 +30,7 @@
 | 第一至第五层前向计算 | 已实现 | 证据簇、内容方向、充分性、逻辑、陪审团及 MC-Score |
 | 第六层四分类概率 | 已实现 | 支持四分类温度缩放和 Macro-NLL、Brier、ECE 指标计算 |
 | 第七层拒答判定 | 已实现 | 使用 family-level split conformal 预测集；单例才回答 |
-| `schema_version=3` JSON/JSONL 读取 | 已实现 | `JsonReader` 支持文件、字符串、流和逐行 JSONL |
+| `schema_version=0` JSON/JSONL 读取 | 已实现 | `JsonReader` 支持文件、字符串、流和逐行 JSONL |
 | 七层结果 JSON/JSONL 写出 | 已实现 | `JsonWriter` 保留输入并追加全部七层结果 |
 | 冻结模型配置读取 | 已实现 | 校验参数范围、权重约束、来源基线和 conformal 阈值 |
 | 七层统一运行器 | 已实现 | `QualifierPipeline` 被 predict 调用，未来由 sandbox 复用 |
@@ -62,7 +62,7 @@
 
 ```text
 人工或未来的预处理 Agent
-        │ schema_version=3 JSON
+        │ schema_version=0 JSON
         ▼
 main.cpp：predict 子命令
         │
@@ -247,7 +247,7 @@ build/Release/news_qualifier.exe
 协议使用：
 
 ```text
-schema_version = 3
+schema_version = 0
 snake_case 字段名
 UTF-8 JSON
 ```
@@ -256,7 +256,7 @@ UTF-8 JSON
 
 ```text
 QualifierRequest
-├─ schema_version                 固定为 3
+├─ schema_version                 固定为 0
 ├─ request_id
 ├─ event_id
 ├─ original_text
