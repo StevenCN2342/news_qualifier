@@ -64,6 +64,14 @@ enum class AggregationType { And, Or, Not, Implication, Causal };
 /** 陪审团智能体可提交的三种裁决。 */
 enum class JuryVerdict { Support, Refute, Uncertain };
 
+/** 第一版 sandbox 约定的四种陪审员审查角色。 */
+enum class JurorRole {
+    StrictLegal,
+    OpenWebPragmatist,
+    CausalSkeptic,
+    AntiManipulation
+};
+
 /** MCScore 映射得到的四级可信度标签。 */
 enum class CredibilityLabel {
     ConfirmedTrue,
@@ -248,6 +256,11 @@ struct ClaimLogicEvaluation {
  * completed_without_error=false 不会丢弃意见，但会降低该智能体的信任权重。
  */
 struct JurorOpinion {
+    // 以下审计字段作为一个可选字段组出现；不参与第四层数值公式。
+    std::optional<std::string> agent_id;
+    std::optional<JurorRole> agent_role;
+    std::optional<std::string> model_id;
+    std::optional<std::string> prompt_version;
     JuryVerdict verdict{JuryVerdict::Uncertain};
     double hybrid_retrieval_score{0.0};
     double confidence{0.0};
@@ -294,6 +307,13 @@ struct ClaimMultiDimensionalEvaluation {
     DimensionScores dimensions;
     bool logic_available{false};
     bool jury_missing{true};
+    // 新第五层在 [-1,1] 上计算的可审计方向量。
+    std::optional<double> content_direction;
+    std::optional<double> content_logic_direction;
+    std::optional<double> evidence_quality;
+    std::optional<double> evidence_direction;
+    std::optional<double> jury_direction;
+    std::optional<double> final_direction;
     std::optional<double> mc_score;
 };
 
@@ -322,8 +342,11 @@ struct FourClassProbabilities {
 struct ProbabilityEvaluation {
     FourClassProbabilities uncalibrated_probabilities;
     FourClassProbabilities probabilities;
-    std::optional<double> directional_sufficiency;
-    std::optional<double> logic_for_mapping;
+    std::optional<double> mc_direction;
+    std::optional<double> positive_mass;
+    std::optional<double> negative_mass;
+    std::optional<double> uncertainty_mass;
+    std::optional<double> truth_completeness;
     std::optional<CredibilityLabel> predicted_label;
 };
 

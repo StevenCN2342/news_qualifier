@@ -18,9 +18,9 @@ QualifierPipeline::QualifierPipeline(const ModelConfig& config)
       conformal_threshold_(config.conformal_threshold) {}
 
 QualifierResult QualifierPipeline::run(const QualifierRequest& request) const {
-    if (request.schema_version != 0) {
+    if (request.schema_version != 3) {
         throw QualifierPipelineError(
-            "QualifierPipeline only accepts input schema version 0");
+            "QualifierPipeline only accepts input schema version 3");
     }
     if (request.claims.empty()) {
         throw QualifierPipelineError("request contains no atomic claims");
@@ -96,7 +96,6 @@ QualifierResult QualifierPipeline::run(const QualifierRequest& request) const {
     for (std::size_t index = 0; index < request.claims.size(); ++index) {
         std::optional<ProbabilityEvaluation> probability =
             probability_adjuster_.evaluate(
-                result.claim_evaluations[index],
                 result.multi_dimensional.claims[index]);
         if (probability) {
             result.rejection_decisions.push_back(rejection_trigger_.decide(

@@ -1,0 +1,121 @@
+{
+  "schema_version": 3,
+  "request_id": "REQ-DIRECTIONAL-SMOKE",
+  "event_id": "EV-DIRECTIONAL-SMOKE",
+  "original_text": "官方记录显示预算已经削减，随后一所学校关闭。",
+  "source": "本地烟雾测试",
+  "publish_date": "2026-10-17",
+  "event_nature": "待核查",
+  "domain": "社会民生与文体教育",
+  "event_time": "2026-10",
+  "seven_elements": {
+    "主体": "某州政府",
+    "行为": "削减预算",
+    "客体": "教育预算",
+    "时间": "2026年10月",
+    "地点": null,
+    "数量": null,
+    "结果": "学校关闭"
+  },
+  "atomic_claims": [
+    {
+      "claim_id": "C001",
+      "claim_text": "某州政府削减了教育预算。",
+      "seven_elements": {
+        "主体": "某州政府",
+        "行为": "削减",
+        "客体": "教育预算",
+        "时间": "2026年10月",
+        "地点": null,
+        "数量": null,
+        "结果": "预算减少"
+      },
+      "check_question": "某州政府是否削减了教育预算？",
+      "claim_type": "存在型",
+      "entities": ["某州政府", "教育预算"],
+      "canon_refs": [],
+      "keywords": ["政府", "教育预算", "削减"],
+      "event_day": 20743,
+      "time_sensitive": true,
+      "evidence": [
+        {
+          "evidence_id": "D001",
+          "original_source_id": "ORIGIN-001",
+          "source_type": "official_registry",
+          "keywords": ["政府", "教育预算", "削减"],
+          "event_day": 20743,
+          "nli_label": "support",
+          "nli_confidence": 0.95
+        }
+      ]
+    },
+    {
+      "claim_id": "C002",
+      "claim_text": "预算削减导致一所学校关闭。",
+      "seven_elements": {
+        "主体": "预算削减",
+        "行为": "导致",
+        "客体": "一所学校",
+        "时间": "随后",
+        "地点": null,
+        "数量": "一所",
+        "结果": "学校关闭"
+      },
+      "check_question": "预算削减是否导致一所学校关闭？",
+      "claim_type": "存在型",
+      "entities": ["教育预算", "学校"],
+      "canon_refs": [],
+      "keywords": ["预算", "学校", "关闭"],
+      "event_day": 20744,
+      "time_sensitive": true,
+      "evidence": [
+        {
+          "evidence_id": "D002",
+          "original_source_id": "ORIGIN-002",
+          "source_type": "news_media",
+          "keywords": ["学校", "关闭"],
+          "event_day": 20744,
+          "nli_label": "refute",
+          "nli_confidence": 0.80
+        }
+      ]
+    }
+  ],
+  "logic_edges": [
+    {
+      "edge_id": "E001",
+      "claim_i": "C001",
+      "claim_j": "C002",
+      "rel": "causal",
+      "required_dimensions": ["S_time", "S_mech", "S_counter", "S_confound", "S_dose"],
+      "dimension_scores": {
+        "S_time": 0.90,
+        "S_mech": 0.35,
+        "S_counter": 0.30,
+        "S_confound": 0.25,
+        "S_dose": 0.20
+      },
+      "nli_score": 0.40
+    }
+  ],
+  "jury_opinions": [
+    {
+      "claim_id": "C001",
+      "opinions": [
+        {"agent_id":"legal-1","agent_role":"strict_legal","model_id":"smoke","prompt_version":"legal-v1","verdict":"support","hybrid_retrieval_score":0.90,"confidence":0.90,"completed_without_error":true},
+        {"agent_id":"web-1","agent_role":"open_web_pragmatist","model_id":"smoke","prompt_version":"web-v1","verdict":"support","hybrid_retrieval_score":0.80,"confidence":0.80,"completed_without_error":true},
+        {"agent_id":"causal-1","agent_role":"causal_skeptic","model_id":"smoke","prompt_version":"causal-v1","verdict":"uncertain","hybrid_retrieval_score":0.70,"confidence":0.60,"completed_without_error":true},
+        {"agent_id":"manipulation-1","agent_role":"anti_manipulation","model_id":"smoke","prompt_version":"manipulation-v1","verdict":"support","hybrid_retrieval_score":0.75,"confidence":0.70,"completed_without_error":true}
+      ]
+    },
+    {
+      "claim_id": "C002",
+      "opinions": [
+        {"agent_id":"legal-2","agent_role":"strict_legal","model_id":"smoke","prompt_version":"legal-v1","verdict":"refute","hybrid_retrieval_score":0.80,"confidence":0.85,"completed_without_error":true},
+        {"agent_id":"web-2","agent_role":"open_web_pragmatist","model_id":"smoke","prompt_version":"web-v1","verdict":"uncertain","hybrid_retrieval_score":0.65,"confidence":0.55,"completed_without_error":true},
+        {"agent_id":"causal-2","agent_role":"causal_skeptic","model_id":"smoke","prompt_version":"causal-v1","verdict":"refute","hybrid_retrieval_score":0.85,"confidence":0.90,"completed_without_error":true},
+        {"agent_id":"manipulation-2","agent_role":"anti_manipulation","model_id":"smoke","prompt_version":"manipulation-v1","verdict":"refute","hybrid_retrieval_score":0.75,"confidence":0.75,"completed_without_error":true}
+      ]
+    }
+  ]
+}

@@ -297,6 +297,16 @@ const char* juryVerdictName(JuryVerdict value) {
     throw JsonWriteError("unsupported jury verdict");
 }
 
+const char* jurorRoleName(JurorRole value) {
+    switch (value) {
+        case JurorRole::StrictLegal: return "strict_legal";
+        case JurorRole::OpenWebPragmatist: return "open_web_pragmatist";
+        case JurorRole::CausalSkeptic: return "causal_skeptic";
+        case JurorRole::AntiManipulation: return "anti_manipulation";
+    }
+    throw JsonWriteError("unsupported juror role");
+}
+
 const char* credibilityLabelName(CredibilityLabel value) {
     switch (value) {
         case CredibilityLabel::ConfirmedTrue: return "confirmed_true";
@@ -481,6 +491,21 @@ void writeJuryInput(Emitter& json, const ClaimJuryOpinions& group) {
     json.beginArray();
     for (const auto& opinion : group.opinions) {
         json.beginObject();
+        const bool has_any_audit = opinion.agent_id || opinion.agent_role ||
+                                   opinion.model_id || opinion.prompt_version;
+        const bool has_all_audit = opinion.agent_id && opinion.agent_role &&
+                                   opinion.model_id && opinion.prompt_version;
+        if (has_any_audit && !has_all_audit) {
+            throw JsonWriteError(
+                "jury opinion audit fields must be all present or all absent");
+        }
+        if (has_all_audit) {
+            json.key("agent_id"); json.value(*opinion.agent_id);
+            json.key("agent_role");
+            json.value(jurorRoleName(*opinion.agent_role));
+            json.key("model_id"); json.value(*opinion.model_id);
+            json.key("prompt_version"); json.value(*opinion.prompt_version);
+        }
         json.key("verdict"); json.value(juryVerdictName(opinion.verdict));
         json.key("hybrid_retrieval_score");
         json.value(opinion.hybrid_retrieval_score);
@@ -791,6 +816,18 @@ void writeLayer5(Emitter& json, const QualifierResult& result) {
         json.key("dimensions"); writeDimensions(json, evaluation.dimensions);
         json.key("logic_available"); json.value(evaluation.logic_available);
         json.key("jury_missing"); json.value(evaluation.jury_missing);
+        json.key("content_direction");
+        writeOptional(json, evaluation.content_direction);
+        json.key("content_logic_direction");
+        writeOptional(json, evaluation.content_logic_direction);
+        json.key("evidence_quality");
+        writeOptional(json, evaluation.evidence_quality);
+        json.key("evidence_direction");
+        writeOptional(json, evaluation.evidence_direction);
+        json.key("jury_direction");
+        writeOptional(json, evaluation.jury_direction);
+        json.key("final_direction");
+        writeOptional(json, evaluation.final_direction);
         json.key("mc_score"); writeOptional(json, evaluation.mc_score);
         json.endObject();
     }
@@ -842,11 +879,20 @@ void writeLayer6(Emitter& json,
         const auto& evaluation = result.probability_evaluations[index];
         json.beginObject();
         json.key("claim_id"); json.value(request.claims[index].id);
-        json.key("directional_sufficiency");
-        if (evaluation) writeOptional(json, evaluation->directional_sufficiency);
+        json.key("mc_direction");
+        if (evaluation) writeOptional(json, evaluation->mc_direction);
         else json.nullValue();
-        json.key("logic_for_mapping");
-        if (evaluation) writeOptional(json, evaluation->logic_for_mapping);
+        json.key("positive_mass");
+        if (evaluation) writeOptional(json, evaluation->positive_mass);
+        else json.nullValue();
+        json.key("negative_mass");
+        if (evaluation) writeOptional(json, evaluation->negative_mass);
+        else json.nullValue();
+        json.key("uncertainty_mass");
+        if (evaluation) writeOptional(json, evaluation->uncertainty_mass);
+        else json.nullValue();
+        json.key("truth_completeness");
+        if (evaluation) writeOptional(json, evaluation->truth_completeness);
         else json.nullValue();
         json.key("uncalibrated_probabilities");
         writeNullableProbabilityObject(json, evaluation, false);

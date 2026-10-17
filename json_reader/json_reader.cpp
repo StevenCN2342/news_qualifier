@@ -394,6 +394,13 @@ const JsonValue& required(const JsonValue::Object& object,
     return iterator->second;
 }
 
+/** 返回可选字段指针；缺少时返回 nullptr。 */
+const JsonValue* optionalField(const JsonValue::Object& object,
+                               const std::string& key) {
+    const auto iterator = object.find(key);
+    return iterator == object.end() ? nullptr : &iterator->second;
+}
+
 /** 读取字符串；业务 ID 和正文可通过 allow_empty=false 禁止空字符串。 */
 std::string asString(const JsonValue& value,
                      const std::string& source,
@@ -513,6 +520,19 @@ JuryVerdict parseJuryVerdict(const JsonValue& value,
         {"support", JuryVerdict::Support},
         {"refute", JuryVerdict::Refute},
         {"uncertain", JuryVerdict::Uncertain},
+    };
+    return parseEnum(value, names, source, path);
+}
+
+/** 第一版 sandbox 的四种陪审员角色。 */
+JurorRole parseJurorRole(const JsonValue& value,
+                         const std::string& source,
+                         const std::string& path) {
+    static const std::map<std::string, JurorRole> names{
+        {"strict_legal", JurorRole::StrictLegal},
+        {"open_web_pragmatist", JurorRole::OpenWebPragmatist},
+        {"causal_skeptic", JurorRole::CausalSkeptic},
+        {"anti_manipulation", JurorRole::AntiManipulation},
     };
     return parseEnum(value, names, source, path);
 }
@@ -861,6 +881,26 @@ JurorOpinion parseOpinion(const JsonValue& value,
                           const std::string& path) {
     const auto& object = *asObject(value, source, path);
     JurorOpinion result;
+    const JsonValue* agent_id = optionalField(object, "agent_id");
+    const JsonValue* agent_role = optionalField(object, "agent_role");
+    const JsonValue* model_id = optionalField(object, "model_id");
+    const JsonValue* prompt_version = optionalField(object, "prompt_version");
+    const int audit_field_count = (agent_id ? 1 : 0) + (agent_role ? 1 : 0) +
+                                  (model_id ? 1 : 0) +
+                                  (prompt_version ? 1 : 0);
+    if (audit_field_count != 0 && audit_field_count != 4) {
+        fieldError(source, path,
+                   "agent_id, agent_role, model_id and prompt_version must "
+                   "either all be present or all be absent");
+    }
+    if (audit_field_count == 4) {
+        result.agent_id = asString(*agent_id, source, path + ".agent_id", false);
+        result.agent_role = parseJurorRole(
+            *agent_role, source, path + ".agent_role");
+        result.model_id = asString(*model_id, source, path + ".model_id", false);
+        result.prompt_version = asString(
+            *prompt_version, source, path + ".prompt_version", false);
+    }
     result.verdict = parseJuryVerdict(required(object, "verdict", source, path),
                                       source, path + ".verdict");
     result.hybrid_retrieval_score = asProbability(
@@ -891,10 +931,26 @@ ClaimJuryOpinions parseClaimOpinions(
     claimIndex(indices, result.claim_id, source, path + ".claim_id");
     const auto& opinions = *asArray(required(object, "opinions", source, path),
                                     source, path + ".opinions");
+    std::set<std::string> agent_ids;
+    std::set<JurorRole> agent_roles;
     for (std::size_t index = 0; index < opinions.size(); ++index) {
-        result.opinions.push_back(parseOpinion(
+        JurorOpinion opinion = parseOpinion(
             opinions[index], source,
-            path + ".opinions[" + std::to_string(index) + "]"));
+            path + ".opinions[" + std::to_string(index) + "]");
+        if (opinion.agent_id && !agent_ids.insert(*opinion.agent_id).second) {
+            fieldError(source,
+                       path + ".opinions[" + std::to_string(index) +
+                           "].agent_id",
+                       "duplicate agent_id within claim");
+        }
+        if (opinion.agent_role &&
+            !agent_roles.insert(*opinion.agent_role).second) {
+            fieldError(source,
+                       path + ".opinions[" + std::to_string(index) +
+                           "].agent_role",
+                       "duplicate agent_role within claim");
+        }
+        result.opinions.push_back(std::move(opinion));
     }
     return result;
 }
@@ -903,7 +959,7 @@ ClaimJuryOpinions parseClaimOpinions(
  * 将完整根对象转换为 QualifierRequest。
  *
  * 转换顺序必须从 atomic_claims 开始：logic_edges 和 jury_opinions 都需要
- * 第一阶段创建的 claim id 索引。schema_version=0 表示输入已经过预处理
+ * 第一阶段创建的 claim id 索引。schema_version=3 表示输入已经过预处理
  * agent 的同义词标准化与评分字段补齐。
  */
 QualifierRequest parseRequest(const JsonValue& root, const std::string& source) {
@@ -912,9 +968,9 @@ QualifierRequest parseRequest(const JsonValue& root, const std::string& source) 
     result.schema_version = asInteger(
         required(object, "schema_version", source, "$"), source,
         "$.schema_version");
-    if (result.schema_version != 0) {
+    if (result.schema_version != 3) {
         fieldError(source, "$.schema_version",
-                   "only schema_version 0 is supported");
+                   "only schema_version 3 is supported");
     }
     result.request_id = asString(required(object, "request_id", source, "$"), source,
                                  "$.request_id", false);

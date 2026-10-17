@@ -44,11 +44,10 @@ public:
         ProbabilityAdjusterConfig config = ProbabilityAdjusterConfig{});
 
     /**
-     * 计算单条声明的四类概率。前层必要字段未定义时返回 nullopt。
-     * 无逻辑边时按规范使用中性 L_i=0.5，但不改写第五层的 logic=nullopt。
+     * 由第五层 MC-Score 计算四类概率。前层必要字段未定义时返回 nullopt。
+     * 逻辑适用时 H=L；逻辑确实不适用时 H=1。
      */
     std::optional<ProbabilityEvaluation> evaluate(
-        const ClaimEvaluation& claim,
         const ClaimMultiDimensionalEvaluation& multi_dimensional) const;
 
     /**

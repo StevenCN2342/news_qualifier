@@ -1,7 +1,7 @@
 {
-  "model_version": "0",
-  "algorithm_version": "0",
-  "input_schema_version": 0,
+  "model_version": "smoke-test-finite-unvalidated",
+  "algorithm_version": "mc-score-optimized-v1",
+  "input_schema_version": 3,
   "calibration_status": "unvalidated",
   "optimized_parameters": {
     "sigmoid_alpha": 4.0,
@@ -14,11 +14,9 @@
       "dose_response": 0.2
     },
     "aggregation_weights": {
-      "content": 0.2,
-      "logic": 0.2,
-      "sufficiency": 0.2,
-      "jury": 0.2,
-      "source": 0.2
+      "content_logic_weight": 0.34,
+      "evidence_weight": 0.33,
+      "jury_weight": 0.33
     }
   },
   "fitted_calibration": {

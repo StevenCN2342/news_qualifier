@@ -17,27 +17,27 @@
 | 模块 | 职责 |
 | --- | --- |
 | 工作 Agent | 事实拆分、证据检索、NLI、关系判断和陪审团意见 |
-| 预处理 Agent | 补齐字段、统一同义词、转换枚举并生成 `schema_version=0` JSON |
+| 预处理 Agent | 补齐字段、统一同义词、转换枚举并生成 `schema_version=3` JSON |
 | `news_qualifier` | 七层确定性计算、概率校准、conformal 拒答和结果序列化 |
 | 回答 Agent | 根据 `answer_agent_input` 生成自然语言回答，不绕过拒答决定 |
 
-完整算法理论以 [重明鸟MC-Score优化版算法规范.md](./重明鸟MC-Score优化版算法规范.md) 为准；输入字段以 [算法层输入JSON结构.md](./算法层输入JSON结构.md) 为准。README 只描述当前工程实现，不再维护一套独立的旧公式。
+基础算法规范见 [重明鸟MC-Score优化版算法规范.md](./重明鸟MC-Score优化版算法规范.md)；第四层 Agent 协议和第五至第七层的后续修订分别以 [第4层agent补全建议.md](./第4层agent补全建议.md) 与 [5-7层算法修改说明.md](./5-7层算法修改说明.md) 为准；输入字段以 [算法层输入JSON结构.md](./算法层输入JSON结构.md) 为准。README 描述当前工程实现，不另行定义冲突公式。
 
 ## 2. 当前实现状态
 
 | 能力 | 状态 | 说明 |
 | --- | --- | --- |
-| 第一至第五层前向计算 | 已实现 | 证据簇、内容方向、充分性、逻辑、陪审团及 MC-Score |
-| 第六层四分类概率 | 已实现 | 支持四分类温度缩放和 Macro-NLL、Brier、ECE 指标计算 |
+| 第一至第五层前向计算 | 已实现 | 以 `d_CL`、`d_E`、`d_J` 在 `[-1,1]` 汇总方向，再映射为 MC-Score |
+| 第六层四分类概率 | 已实现 | 由 MC 构造 `P/N/U/H`，支持四分类温度缩放和 Macro-NLL、Brier、ECE |
 | 第七层拒答判定 | 已实现 | 使用 family-level split conformal 预测集；单例才回答 |
-| `schema_version=0` JSON/JSONL 读取 | 已实现 | `JsonReader` 支持文件、字符串、流和逐行 JSONL |
+| `schema_version=3` JSON/JSONL 读取 | 已实现 | `JsonReader` 支持文件、字符串、流和逐行 JSONL |
 | 七层结果 JSON/JSONL 写出 | 已实现 | `JsonWriter` 保留输入并追加全部七层结果 |
 | 冻结模型配置读取 | 已实现 | 校验参数范围、权重约束、来源基线和 conformal 阈值 |
 | 七层统一运行器 | 已实现 | `QualifierPipeline` 被 predict 调用，未来由 sandbox 复用 |
 | `predict` 命令行 | 已实现 | 支持文件输出或纯 JSON 标准输出 |
 | CMake 构建 | 已实现 | 生成静态核心库和 `news_qualifier.exe` |
 | `sandbox` 命令行 | 已预留，未实现 | 当前会明确返回“P1 尚未实现” |
-| 12 参数优化 | 未实现 | 待实现 family 分组交叉验证和参数优化器 |
+| 10 参数优化 | 未实现 | 待实现 family 分组交叉验证和参数优化器 |
 | 温度拟合器 | 未实现 | 当前只会使用配置中冻结的 `temperature` |
 | sandbox 数据集读取与切分 | 未实现 | 待实现 `family_id` 分组和 fit/calib/test 切分 |
 | 冻结配置写出 | 未实现 | 当前只有读取器；writer 属于 P1 |
@@ -62,7 +62,7 @@
 
 ```text
 人工或未来的预处理 Agent
-        │ schema_version=0 JSON
+        │ schema_version=3 JSON
         ▼
 main.cpp：predict 子命令
         │
@@ -125,6 +125,11 @@ news_qualifier/
 │  ├─ model_config.smoke_finite.json
 │  └─ model_config.smoke_infinite.json
 │
+├─ manual_test/
+│  └─ input.directional-smoke.json   四 Agent 与新第五、六层联调输入
+│
+├─ 第4层agent补全建议.md
+├─ 5-7层算法修改说明.md
 ├─ 算法层输入JSON结构.md
 └─ 重明鸟MC-Score优化版算法规范.md
 ```
@@ -247,7 +252,7 @@ build/Release/news_qualifier.exe
 协议使用：
 
 ```text
-schema_version = 0
+schema_version = 3
 snake_case 字段名
 UTF-8 JSON
 ```
@@ -256,7 +261,7 @@ UTF-8 JSON
 
 ```text
 QualifierRequest
-├─ schema_version                 固定为 0
+├─ schema_version                 固定为 3
 ├─ request_id
 ├─ event_id
 ├─ original_text
@@ -280,6 +285,7 @@ QualifierRequest
 │  └─ evidence[]
 ├─ logic_edges[1..4]
 └─ jury_opinions[]                每条 claim 恰好一个分组
+   └─ opinions[]                  可包含四个标准角色的独立意见
 ```
 
 完整字段约束和可直接联调的样例见 [算法层输入JSON结构.md](./算法层输入JSON结构.md)。
@@ -313,6 +319,27 @@ support
 refute
 uncertain
 ```
+
+陪审员审计字段作为一组可选字段使用；只要提供其中一个，就必须全部提供：
+
+```text
+agent_id
+agent_role
+model_id
+prompt_version
+```
+
+`agent_role` 的四个标准值为：
+
+```text
+strict_legal
+open_web_pragmatist
+causal_skeptic
+anti_manipulation
+```
+
+同一声明内不得重复 `agent_id` 或 `agent_role`。角色身份不参与数值公式；
+第四层核心仍接受可变数量的意见，sandbox 数据生成流程负责确保四角色齐全。
 
 `logic_edges[].rel`：
 
@@ -379,6 +406,30 @@ SandboxSample
 - `answer_agent_input` 是回答 Agent 使用的精简视图，不替代完整审计结果；
 - `event_has_rejected_claims` 只表示至少有一个 claim 被拒答，目前没有额外定义事件级覆盖规则。
 
+第五层逐声明输出额外包含：
+
+```text
+content_direction
+content_logic_direction
+evidence_quality
+evidence_direction
+jury_direction
+final_direction
+mc_score
+```
+
+第六层逐声明输出额外包含：
+
+```text
+mc_direction
+positive_mass
+negative_mass
+uncertainty_mass
+truth_completeness
+uncalibrated_probabilities
+calibrated_probabilities
+```
+
 四分类稳定标识为：
 
 ```text
@@ -401,7 +452,7 @@ multiple_candidate_labels
 
 冻结配置包含四类数据：
 
-### 9.1 fit 联合优化的 12 个数值
+### 9.1 fit 联合优化的 10 个数值
 
 ```text
 sigmoid_alpha
@@ -415,18 +466,16 @@ causal_weights:
   dose_response
 
 aggregation_weights:
-  content
-  logic
-  sufficiency
-  jury
-  source
+  content_logic_weight
+  evidence_weight
+  jury_weight
 ```
 
 约束：
 
 - 五个 `causal_weights` 非负且和为 1；
-- 五个 `aggregation_weights` 非负且和为 1；
-- `aggregation_weights.logic <= 0.8`。
+- 三个 `aggregation_weights` 非负且和为 1；
+- 旧版五权重配置会被明确拒绝，不能直接用于新的方向性 MC-Score。
 
 ### 9.2 单独拟合的温度
 
@@ -434,7 +483,7 @@ aggregation_weights:
 fitted_calibration.temperature
 ```
 
-温度不参与上述 12 参数的联合搜索。它应在最佳基础参数产生的 family 分组折外预测上，使用多分类 NLL 单独拟合。
+温度不参与上述 10 参数的联合搜索。它应在最佳基础参数产生的 family 分组折外预测上，使用多分类 NLL 单独拟合。
 
 ### 9.3 预先冻结的固定参数
 
@@ -507,7 +556,7 @@ R_ij = sum(w_k * S_ijk)
 L_ij = p_NLI,ij * R_ij
 ```
 
-没有逻辑边时保持 `logic_available=false`；第五层删除逻辑项，第六层映射时使用中性逻辑量 `0.5`。
+没有适用逻辑边时保持 `logic_available=false`。第五层令 `d_CL=d_C`，第六层令 `H=1`；这表示简单声明不会仅因不存在逻辑关系而被降为“大体为真”。
 
 ### 第四层：带符号陪审团
 
@@ -519,23 +568,41 @@ S_jury,i = 0.5 + 0.5 * D_jury,i * Consensus_i
 
 没有有效投票时显式记录 `jury_missing=true`，使用 `jury=0.5` 和 `consensus=0`。旧的 `w_R`、`w_U` 已删除。
 
+四个标准角色使用不同角色提示词，但接收相同的核心材料。`agent_id`、`agent_role`、`model_id` 和 `prompt_version` 只用于审计和输入校验，不参与信任加权公式。四票的汇总结果由本层计算，外部 Agent 不提交 `jury_score`。
+
 ### 第五层：逐声明 MC-Score
 
 ```text
-MC_i = weighted_mean(
-  content,
-  available_logic,
-  sufficiency,
-  jury,
-  source * independence
-)
+d_C  = 2C - 1
+d_CL = d_C * [1 - a_L(1-L)]
+Q_E  = (S * R * I)^(1/3)
+d_E  = Q_E * d_C
+d_J  = a_J * (2J - 1)
+
+D_final = lambda1*d_CL + lambda2*d_E + lambda3*d_J
+MC      = (D_final + 1) / 2
 ```
 
-使用五个非负 `lambda` 权重。无逻辑边时删除逻辑项并重新归一化，而不是把缺失逻辑当成 0。
+三个非负权重之和为 1。第五层不使用门控；陪审团缺失时 `d_J=0`，其余权重不重新归一化，因此缺失信息会使结果自然向 `MC=0.5` 收缩。
 
 ### 第六层：四分类概率与温度校准
 
-通过 `MC_i`、方向性充分量和逻辑质量构造 `T/M/I/F` 四类原始质量，再使用多分类温度缩放。温度范围为 `[0.1,5.0]`。
+先令：
+
+```text
+D_MC = 2MC - 1
+P = max(D_MC, 0)
+N = max(-D_MC, 0)
+U = 1 - |D_MC|
+H = L（逻辑适用）或 1（逻辑确实不适用）
+
+q_T = P*H
+q_M = P*(1-H)
+q_F = N
+q_I = U
+```
+
+随后执行四分类温度缩放。温度范围为 `[0.1,5.0]`，并且必须基于新第五、六层产生的折外预测重新拟合。
 
 这不是旧版“把单个 MC-Score 做二分类 logit 温度缩放”的实现。
 
@@ -575,7 +642,7 @@ SandboxSample
 ```text
 fit
   ├─ 按 family 分组交叉验证
-  ├─ 搜索 alpha、gamma、w1..w5、lambda1..lambda5
+  ├─ 搜索 alpha、gamma、w1..w5、lambda1..lambda3
   └─ 使用最佳参数的折外预测拟合温度 T
 
 calib
@@ -585,11 +652,10 @@ test
   └─ 全部参数冻结后只运行一次，不能用于反复挑选参数
 ```
 
-不应对 12 个基础参数做完整笛卡尔积网格搜索。规范建议：
+不应对 10 个基础参数做完整笛卡尔积网格搜索。规范建议：
 
 - `alpha` 和 `gamma` 在对数尺度搜索；
-- 两组五维权重通过单纯形或 softmax 参数化；
-- 拒绝 `logic_weight > 0.8` 的候选；
+- 五维因果权重和三维方向汇总权重分别通过单纯形或 softmax 参数化；
 - 固定并记录随机种子、family 切分和每次 trial；
 - 使用四分类 Macro-NLL 选择基础参数，Macro-BAcc 作为并列次级指标；
 - ECE 只作为报告指标。
@@ -616,7 +682,7 @@ test
 3. 当前 `predict` 一次处理一个 JSON，请求流式 JSONL 尚未接入 `main.cpp`；
 4. 非因果关系维度已经进入输入协议，但当前第三层普通关系主要使用 `nli_score`；这些维度如何进一步进入公式仍需单独评审；
 5. 当前没有事件级最终标签规则，只输出逐声明决定和 `event_has_rejected_claims`；
-6. 尚无持久化单元测试和回归黄金样例；
+6. 已有一份方向性端到端联调输入，但尚无自动化单元测试和回归黄金输出；
 7. 数学公式闭合不等于现实准确，真实有效性仍需独立 sandbox 数据验证。
 
 ## 14. 下一阶段优先级
@@ -632,7 +698,7 @@ P0（已完成）
 P1（待实现）
 ├─ sandbox JSONL 读取
 ├─ family 分组切分
-├─ 12 参数优化
+├─ 10 参数优化
 ├─ 温度拟合
 ├─ calib conformal 调度
 ├─ test 指标报告

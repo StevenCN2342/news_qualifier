@@ -79,9 +79,8 @@ MultiDimensionalQualifier::MultiDimensionalQualifier(
     MultiDimensionalConfig config)
     : config_(config) {
     const double weights[] = {
-        config_.content_weight, config_.logic_weight,
-        config_.sufficiency_weight, config_.jury_weight,
-        config_.source_weight};
+        config_.content_logic_weight, config_.evidence_weight,
+        config_.jury_weight};
     double sum = 0.0;
     for (double weight : weights) {
         if (!std::isfinite(weight) || weight < 0.0 || weight > 1.0) {
@@ -93,10 +92,6 @@ MultiDimensionalQualifier::MultiDimensionalQualifier(
     if (std::abs(sum - 1.0) > 1e-9) {
         throw std::invalid_argument(
             "multi-dimensional weights must sum to one");
-    }
-    if (config_.logic_weight > 0.8) {
-        throw std::invalid_argument(
-            "logic_weight must not exceed 0.8");
     }
 }
 
@@ -168,30 +163,44 @@ MultiDimensionalEvaluation MultiDimensionalQualifier::evaluate(
                           *item.dimensions.consensus;
         }
 
-        // MC_i 的必要方向和质量输入齐全后才计算；optional 缺失表示前层尚未运行。
+        // 新第五层先在 [-1,1] 上汇总真实性方向，再映射回 [0,1]。
+        // 必要输入未定义时保留 nullopt，不能用中性值掩盖前层未运行。
         if (item.dimensions.content && item.dimensions.sufficiency &&
             item.dimensions.source && item.dimensions.independence &&
             item.dimensions.jury) {
-            double numerator =
-                config_.content_weight * *item.dimensions.content +
-                config_.sufficiency_weight * *item.dimensions.sufficiency +
-                config_.jury_weight * *item.dimensions.jury +
-                config_.source_weight * *item.dimensions.source *
-                    *item.dimensions.independence;
-            double denominator =
-                config_.content_weight + config_.sufficiency_weight +
-                config_.jury_weight + config_.source_weight;
-
-            // a_i=0 时同时删除逻辑分子和逻辑权重，不能把缺失逻辑当成 0.5。
+            const double content_direction =
+                2.0 * *item.dimensions.content - 1.0;
+            double content_logic_direction = content_direction;
             if (item.logic_available) {
-                numerator += config_.logic_weight * *item.dimensions.logic;
-                denominator += config_.logic_weight;
+                // d_CL=L*d_C；逻辑只修饰内容方向，不自行制造真假方向。
+                content_logic_direction *= *item.dimensions.logic;
             }
-            if (denominator <= 0.0) {
-                throw std::logic_error(
-                    "multi-dimensional denominator must be positive");
-            }
-            item.mc_score = std::clamp(numerator / denominator, 0.0, 1.0);
+
+            // Q_E=(SRI)^(1/3)。任一质量维度为零时，证据方向贡献归零。
+            const double evidence_quality = std::cbrt(
+                *item.dimensions.sufficiency * *item.dimensions.source *
+                *item.dimensions.independence);
+            const double evidence_direction =
+                evidence_quality * content_direction;
+
+            // 缺失陪审团不能按中性票参与加权；a_J=0 使该项方向贡献为零，
+            // 同时保留固定 lambda3，不重新归一化其他两项。
+            const double jury_direction = item.jury_missing
+                                               ? 0.0
+                                               : 2.0 * *item.dimensions.jury - 1.0;
+            const double final_direction = std::clamp(
+                config_.content_logic_weight * content_logic_direction +
+                    config_.evidence_weight * evidence_direction +
+                    config_.jury_weight * jury_direction,
+                -1.0, 1.0);
+
+            item.content_direction = content_direction;
+            item.content_logic_direction = content_logic_direction;
+            item.evidence_quality = evidence_quality;
+            item.evidence_direction = evidence_direction;
+            item.jury_direction = jury_direction;
+            item.final_direction = final_direction;
+            item.mc_score = (final_direction + 1.0) / 2.0;
         }
 
         if (claim.status == ClaimStatus::InsufficientInformation) {

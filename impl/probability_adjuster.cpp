@@ -95,46 +95,34 @@ ProbabilityAdjuster::ProbabilityAdjuster(ProbabilityAdjusterConfig config)
 }
 
 std::optional<ProbabilityEvaluation> ProbabilityAdjuster::evaluate(
-    const ClaimEvaluation& claim,
     const ClaimMultiDimensionalEvaluation& multi_dimensional) const {
-    if (!claim.claim_id.empty() && !multi_dimensional.claim_id.empty() &&
-        claim.claim_id != multi_dimensional.claim_id) {
-        throw std::invalid_argument(
-            "claim and multi-dimensional result ids do not match");
-    }
-    if (!claim.direction || !multi_dimensional.mc_score ||
-        !multi_dimensional.dimensions.sufficiency) {
-        return std::nullopt;
-    }
-    if (!std::isfinite(*claim.direction) || *claim.direction < -1.0 ||
-        *claim.direction > 1.0) {
-        throw std::invalid_argument(
-            "claim.direction must be finite and within [-1, 1]");
-    }
+    if (!multi_dimensional.mc_score) return std::nullopt;
 
     const double mc =
         requireProbability(*multi_dimensional.mc_score, "mc_score");
-    const double sufficiency = requireProbability(
-        *multi_dimensional.dimensions.sufficiency, "sufficiency");
-    const double directional_sufficiency =
-        sufficiency * std::abs(*claim.direction);
+    const double mc_direction = std::clamp(2.0 * mc - 1.0, -1.0, 1.0);
+    const double positive_mass = std::max(mc_direction, 0.0);
+    const double negative_mass = std::max(-mc_direction, 0.0);
+    const double uncertainty_mass = 1.0 - std::abs(mc_direction);
 
-    double logic = 0.5;
+    // H 只在偏真质量 P 内区分 T/M。无适用逻辑边的简单声明取 H=1，
+    // 不会仅因没有逻辑关系而被自动降为“大体为真”。
+    double truth_completeness = 1.0;
     if (multi_dimensional.logic_available) {
         if (!multi_dimensional.dimensions.logic) {
             throw std::invalid_argument(
                 "logic_available requires a logic score");
         }
-        logic = requireProbability(*multi_dimensional.dimensions.logic,
-                                   "logic_score");
+        truth_completeness = requireProbability(
+            *multi_dimensional.dimensions.logic, "logic_score");
     }
 
-    // q_T + q_M + q_I + q_F = 1；无方向、纯中立或强冲突时 Q=0，I 占主导。
+    // q_T+q_M=P，q_F=N，q_I=U，因此四项非负且总和严格为 1。
     const std::array<double, 4> raw{
-        directional_sufficiency * mc * logic,
-        directional_sufficiency * mc * (1.0 - logic),
-        1.0 - directional_sufficiency,
-        directional_sufficiency * (1.0 - mc)};
+        positive_mass * truth_completeness,
+        positive_mass * (1.0 - truth_completeness),
+        uncertainty_mass,
+        negative_mass};
 
     std::array<double, 4> logits{};
     for (std::size_t index = 0; index < raw.size(); ++index) {
@@ -153,8 +141,11 @@ std::optional<ProbabilityEvaluation> ProbabilityAdjuster::evaluate(
     ProbabilityEvaluation result;
     result.uncalibrated_probabilities = toProbabilities(raw);
     result.probabilities = toProbabilities(calibrated);
-    result.directional_sufficiency = directional_sufficiency;
-    result.logic_for_mapping = logic;
+    result.mc_direction = mc_direction;
+    result.positive_mass = positive_mass;
+    result.negative_mass = negative_mass;
+    result.uncertainty_mass = uncertainty_mass;
+    result.truth_completeness = truth_completeness;
     result.predicted_label = labelAt(static_cast<std::size_t>(
         std::distance(calibrated.begin(),
                       std::max_element(calibrated.begin(), calibrated.end()))));

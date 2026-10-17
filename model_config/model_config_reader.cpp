@@ -414,13 +414,13 @@ ModelConfig parseConfig(const JsonValue& root, const std::string& source) {
         required(object, "calibration_status", source, "$"), source,
         "$.calibration_status");
 
-    if (result.algorithm_version != "0") {
+    if (result.algorithm_version != "mc-score-optimized-v1") {
         fieldError(source, "$.algorithm_version",
-                   "only algorithm version 0 is supported");
+                   "only mc-score-optimized-v1 is supported");
     }
-    if (result.input_schema_version != 0) {
+    if (result.input_schema_version != 3) {
         fieldError(source, "$.input_schema_version",
-                   "only input schema version 0 is supported");
+                   "only input schema version 3 is supported");
     }
 
     const auto& optimized = asObject(
@@ -471,37 +471,34 @@ ModelConfig parseConfig(const JsonValue& root, const std::string& source) {
         required(optimized, "aggregation_weights", source,
                  "$.optimized_parameters"),
         source, "$.optimized_parameters.aggregation_weights");
-    result.multi_dimensional.content_weight = probability(
-        required(aggregation, "content", source,
-                 "$.optimized_parameters.aggregation_weights"),
-        source, "$.optimized_parameters.aggregation_weights.content");
-    result.multi_dimensional.logic_weight = probability(
-        required(aggregation, "logic", source,
-                 "$.optimized_parameters.aggregation_weights"),
-        source, "$.optimized_parameters.aggregation_weights.logic");
-    result.multi_dimensional.sufficiency_weight = probability(
-        required(aggregation, "sufficiency", source,
-                 "$.optimized_parameters.aggregation_weights"),
-        source, "$.optimized_parameters.aggregation_weights.sufficiency");
-    result.multi_dimensional.jury_weight = probability(
-        required(aggregation, "jury", source,
-                 "$.optimized_parameters.aggregation_weights"),
-        source, "$.optimized_parameters.aggregation_weights.jury");
-    result.multi_dimensional.source_weight = probability(
-        required(aggregation, "source", source,
-                 "$.optimized_parameters.aggregation_weights"),
-        source, "$.optimized_parameters.aggregation_weights.source");
-    requireWeightSum(
-        {result.multi_dimensional.content_weight,
-         result.multi_dimensional.logic_weight,
-         result.multi_dimensional.sufficiency_weight,
-         result.multi_dimensional.jury_weight,
-         result.multi_dimensional.source_weight},
-        source, "$.optimized_parameters.aggregation_weights");
-    if (result.multi_dimensional.logic_weight > 0.8) {
-        fieldError(source, "$.optimized_parameters.aggregation_weights.logic",
-                   "must not exceed 0.8");
+    std::set<std::string> aggregation_keys;
+    for (const auto& item : aggregation) aggregation_keys.insert(item.first);
+    const std::set<std::string> expected_aggregation_keys{
+        "content_logic_weight", "evidence_weight", "jury_weight"};
+    if (aggregation_keys != expected_aggregation_keys) {
+        fieldError(source, "$.optimized_parameters.aggregation_weights",
+                   "must contain exactly content_logic_weight, "
+                   "evidence_weight and jury_weight; the old five-weight "
+                   "configuration is not compatible with directional MC-Score");
     }
+    result.multi_dimensional.content_logic_weight = probability(
+        required(aggregation, "content_logic_weight", source,
+                 "$.optimized_parameters.aggregation_weights"),
+        source,
+        "$.optimized_parameters.aggregation_weights.content_logic_weight");
+    result.multi_dimensional.evidence_weight = probability(
+        required(aggregation, "evidence_weight", source,
+                 "$.optimized_parameters.aggregation_weights"),
+        source, "$.optimized_parameters.aggregation_weights.evidence_weight");
+    result.multi_dimensional.jury_weight = probability(
+        required(aggregation, "jury_weight", source,
+                 "$.optimized_parameters.aggregation_weights"),
+        source, "$.optimized_parameters.aggregation_weights.jury_weight");
+    requireWeightSum(
+        {result.multi_dimensional.content_logic_weight,
+         result.multi_dimensional.evidence_weight,
+         result.multi_dimensional.jury_weight},
+        source, "$.optimized_parameters.aggregation_weights");
 
     const auto& fitted = asObject(
         required(object, "fitted_calibration", source, "$"), source,
