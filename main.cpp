@@ -27,9 +27,7 @@ void printUsage(std::ostream& output, const char* executable) {
            "(--output <response.json> | --stdout) [--compact]\n\n"
         << "Modes:\n"
         << "  predict   Run the frozen seven-layer model for one schema-3 "
-           "request.\n"
-        << "  sandbox   Reserved for the P1 training pipeline; not available "
-           "yet.\n\n"
+           "request.\n\n"
         << "Options:\n"
         << "  --model    Frozen or smoke-test model configuration.\n"
         << "  --input    UTF-8 schema-3 request JSON.\n"
@@ -121,10 +119,6 @@ int main(int argc, char* argv[]) {
             const auto options = parsePredictOptions(argc, argv);
             chongming::qualifier::PredictionRunner::run(options, std::cout);
             return 0;
-        }
-        if (mode == "sandbox") {
-            throw CommandLineError(
-                "sandbox is a reserved P1 mode and is not implemented yet");
         }
         throw CommandLineError("unknown mode: " + mode);
     } catch (const CommandLineError& error) {

@@ -19,7 +19,7 @@ public:
  * 使用一份冻结配置执行完整七层前向计算。
  *
  * 本类不读取文件、不写 JSON，也不保存请求状态；同一个实例可顺序处理多条
- * 请求。sandbox 与 predict 应复用本类，避免出现两套计算流程。
+ * 请求。命令行 predict 和项目外的批量调度脚本均通过本类执行相同计算流程。
  */
 class QualifierPipeline {
 public:

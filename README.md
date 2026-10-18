@@ -33,14 +33,14 @@
 | `schema_version=3` JSON/JSONL 读取 | 已实现 | `JsonReader` 支持文件、字符串、流和逐行 JSONL |
 | 七层结果 JSON/JSONL 写出 | 已实现 | `JsonWriter` 保留输入并追加全部七层结果 |
 | 冻结模型配置读取 | 已实现 | 校验参数范围、权重约束、来源基线和 conformal 阈值 |
-| 七层统一运行器 | 已实现 | `QualifierPipeline` 被 predict 调用，未来由 sandbox 复用 |
+| 七层统一运行器 | 已实现 | `QualifierPipeline` 由 predict 调用，批量任务也复用同一计算流程 |
 | `predict` 命令行 | 已实现 | 支持文件输出或纯 JSON 标准输出 |
 | CMake 构建 | 已实现 | 生成静态核心库和 `news_qualifier.exe` |
-| `sandbox` 命令行 | 已预留，未实现 | 当前会明确返回“P1 尚未实现” |
-| 10 参数优化 | 未实现 | 待实现 family 分组交叉验证和参数优化器 |
+| 外部批量调度 | 未实现 | 由项目外脚本逐条调用 predict，不进入 C++ 核心程序 |
+| 10 参数优化 | 未实现 | 由外部实验脚本完成 family 分组交叉验证和参数优化 |
 | 温度拟合器 | 未实现 | 当前只会使用配置中冻结的 `temperature` |
-| sandbox 数据集读取与切分 | 未实现 | 待实现 `family_id` 分组和 fit/calib/test 切分 |
-| 冻结配置写出 | 未实现 | 当前只有读取器；writer 属于 P1 |
+| 实验数据集读取与切分 | 未实现 | 由外部脚本完成 `family_id` 分组和 fit/calib/test 切分 |
+| 冻结配置写出 | 未实现 | 当前 C++ 程序只有读取器；由外部实验脚本生成候选配置 |
 | DeepSeek/豆包 Agent 接口 | 未实现 | 不影响人工 JSON 的本地联调 |
 | 持久化自动测试 | 未实现 | 已通过严格编译、CMake 构建和临时端到端冒烟测试 |
 
@@ -134,22 +134,20 @@ news_qualifier/
 └─ 重明鸟MC-Score优化版算法规范.md
 ```
 
-计划在 P1 增加：
+计划在项目外增加实验与批量调度脚本：
 
 ```text
-sandbox/
-├─ sandbox_types.h
-├─ sandbox_dataset_reader.h/.cpp
-├─ family_dataset_splitter.h/.cpp
-└─ sandbox_runner.h/.cpp
+experiment_runner.py
+├─ 读取实验 JSONL
+├─ 按 family_id 划分 fit/calib/test
+├─ 搜索基础参数并拟合温度
+├─ 计算 calib conformal 阈值
+└─ 生成候选冻结配置
 
-training/
-├─ parameter_optimizer.h/.cpp
-├─ temperature_fitter.h/.cpp
-└─ test_evaluator.h/.cpp
-
-model_config/
-└─ model_config_writer.h/.cpp
+batch_predict.py
+├─ 逐条生成 schema-3 请求文件
+├─ 调用 news_qualifier.exe predict
+└─ 汇总写入结果 JSONL
 ```
 
 ## 5. 构建
@@ -339,7 +337,7 @@ anti_manipulation
 ```
 
 同一声明内不得重复 `agent_id` 或 `agent_role`。角色身份不参与数值公式；
-第四层核心仍接受可变数量的意见，sandbox 数据生成流程负责确保四角色齐全。
+第四层核心仍接受可变数量的意见，外部数据生成流程负责确保四角色齐全。
 
 `logic_edges[].rel`：
 
@@ -363,12 +361,12 @@ coordinate
 
 ### 7.3 `family_id` 不属于普通 predict 输入
 
-`family_id` 用于 sandbox 按事件族切分 fit/calib/test，以及在 calib 中计算族级 conformal 阈值。生产 predict 只消费已经冻结的阈值，因此普通 `QualifierRequest` 不需要 `family_id`。
+`family_id` 用于外部实验流程按事件族切分 fit/calib/test，以及在 calib 中计算族级 conformal 阈值。生产 predict 只消费已经冻结的阈值，因此普通 `QualifierRequest` 不需要 `family_id`。
 
-未来 sandbox 的一条 JSONL 记录预计为：
+未来外部实验数据集的一条 JSONL 记录预计为：
 
 ```text
-SandboxSample
+EvaluationSample
 ├─ sample_id
 ├─ family_id
 ├─ claim_labels[]
@@ -623,12 +621,12 @@ Gamma_i = {k : 1 - p_k <= q_conf}
 
 当前实现不再叠加旧版充分性、共识度、独立性和校准概率硬阈值。
 
-## 11. 参数优化与 sandbox 计划
+## 11. 项目外参数优化与评测计划
 
-P1 计划使用外层 sandbox JSONL：
+参数优化不作为 `news_qualifier.exe` 的命令模式。外部实验脚本使用以下 JSONL 记录：
 
 ```text
-SandboxSample
+EvaluationSample
 ├─ sample_id
 ├─ family_id
 ├─ claim_labels[]
@@ -678,12 +676,12 @@ test
 ## 13. 当前已知边界
 
 1. 当前没有 Agent 接口，人工输入必须已经符合完整 schema 3；
-2. 当前 smoke 配置没有经过真实 sandbox 拟合和校准；
+2. 当前 smoke 配置没有经过真实实验数据拟合和校准；
 3. 当前 `predict` 一次处理一个 JSON，请求流式 JSONL 尚未接入 `main.cpp`；
 4. 非因果关系维度已经进入输入协议，但当前第三层普通关系主要使用 `nli_score`；这些维度如何进一步进入公式仍需单独评审；
 5. 当前没有事件级最终标签规则，只输出逐声明决定和 `event_has_rejected_claims`；
 6. 已有一份方向性端到端联调输入，但尚无自动化单元测试和回归黄金输出；
-7. 数学公式闭合不等于现实准确，真实有效性仍需独立 sandbox 数据验证。
+7. 数学公式闭合不等于现实准确，真实有效性仍需独立实验数据验证。
 
 ## 14. 下一阶段优先级
 
@@ -696,7 +694,7 @@ P0（已完成）
 └─ CMake 构建
 
 P1（待实现）
-├─ sandbox JSONL 读取
+├─ 项目外实验 JSONL 读取
 ├─ family 分组切分
 ├─ 10 参数优化
 ├─ 温度拟合
