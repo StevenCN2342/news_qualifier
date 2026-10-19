@@ -17,24 +17,52 @@ double clamp01(double value) {
     return std::clamp(value, 0.0, 1.0);
 }
 
+double effectiveKeywordSimilarity(double similarity,
+                                  double zero_bound,
+                                  double identity_bound) {
+    const double normalized = clamp01(similarity);
+    if (normalized < zero_bound) return 0.0;
+    if (normalized >= identity_bound) return normalized;
+
+    // 连接 (zero_bound, 0) 与 (identity_bound, identity_bound) 的直线。
+    // 默认边界为0.6和0.8时，该式等价于 y=4x-2.4。
+    return identity_bound * (normalized - zero_bound) /
+           (identity_bound - zero_bound);
+}
+
 double keywordRelevance(const std::unordered_set<std::string>& claim_keywords,
-                        const std::unordered_set<std::string>& evidence_keywords) {
-    // README 明确要求任一集合为空时返回 0，避免分母为零。
-    if (claim_keywords.empty() || evidence_keywords.empty()) {
+                        const Evidence& evidence,
+                        double zero_bound,
+                        double identity_bound) {
+    // 相关度衡量“声明关键词被证据覆盖的比例”，因此分母固定为声明关键词数。
+    if (claim_keywords.empty()) {
         return 0.0;
     }
-    std::size_t intersection = 0;
-    const auto& smaller = claim_keywords.size() <= evidence_keywords.size()
-                              ? claim_keywords
-                              : evidence_keywords;
-    const auto& larger = claim_keywords.size() <= evidence_keywords.size()
-                             ? evidence_keywords
-                             : claim_keywords;
-    for (const auto& keyword : smaller) {
-        intersection += larger.count(keyword);
+
+    std::unordered_map<std::string, double> best_match;
+    for (const auto& claim_keyword : claim_keywords) {
+        best_match.emplace(claim_keyword,
+                           evidence.keywords.count(claim_keyword) > 0 ? 1.0 : 0.0);
     }
-    return static_cast<double>(intersection) /
-           static_cast<double>(smaller.size());
+
+    // 多个证据关键词可能指向同一个声明关键词；每个声明关键词只取最高值，
+    // 防止同一含义被重复计分。中间区间先经过连续分段函数压缩。
+    for (const auto& match : evidence.keyword_matches) {
+        const double effective = effectiveKeywordSimilarity(
+            match.similarity, zero_bound, identity_bound);
+        if (effective <= 0.0) continue;
+        const auto position = best_match.find(match.claim_keyword);
+        if (position != best_match.end()) {
+            position->second = std::max(position->second, effective);
+        }
+    }
+
+    double covered = 0.0;
+    for (const auto& [keyword, score] : best_match) {
+        static_cast<void>(keyword);
+        covered += score;
+    }
+    return covered / static_cast<double>(claim_keywords.size());
 }
 
 }  // namespace
@@ -71,7 +99,13 @@ EvidenceAuthenticityQualifier::EvidenceAuthenticityQualifier(
         !std::isfinite(config_.sufficiency_gamma) ||
         config_.sufficiency_gamma <= 0.0 ||
         !std::isfinite(config_.reference_cluster_count) ||
-        config_.reference_cluster_count <= 0.0) {
+        config_.reference_cluster_count <= 0.0 ||
+        !std::isfinite(config_.keyword_similarity_zero_bound) ||
+        !std::isfinite(config_.keyword_similarity_identity_bound) ||
+        config_.keyword_similarity_zero_bound < 0.0 ||
+        config_.keyword_similarity_identity_bound > 1.0 ||
+        config_.keyword_similarity_zero_bound >=
+            config_.keyword_similarity_identity_bound) {
         throw std::invalid_argument("invalid evidence-authenticity configuration");
     }
     for (const auto& [source_type, baseline] : config_.source_baselines) {
@@ -113,7 +147,10 @@ std::vector<EvidenceAssessment> EvidenceAuthenticityQualifier::assess(
                 item.base_reliability = clamp01(baseline->second);
             }
         }
-        item.relevance = keywordRelevance(claim.keywords, evidence.keywords);
+        item.relevance = keywordRelevance(
+            claim.keywords, evidence,
+            config_.keyword_similarity_zero_bound,
+            config_.keyword_similarity_identity_bound);
         item.timeliness = 1.0;
         if (claim.time_sensitive) {
             if (claim.event_day && evidence.event_day) {

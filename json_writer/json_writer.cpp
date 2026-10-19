@@ -362,6 +362,20 @@ void writeEvidenceInput(Emitter& json, const Evidence& evidence) {
     if (evidence.source_type) json.value(sourceTypeName(*evidence.source_type));
     else json.nullValue();
     json.key("keywords"); writeStringSet(json, evidence.keywords);
+    // 旧协议没有 keyword_matches。为空时省略而不是写出空数组，保证包含
+    // 非空 keywords 的旧输入经过 JsonWriter 后仍可被 JsonReader 再次读取。
+    if (!evidence.keyword_matches.empty()) {
+        json.key("keyword_matches");
+        json.beginArray();
+        for (const auto& match : evidence.keyword_matches) {
+            json.beginObject();
+            json.key("evidence_keyword"); json.value(match.evidence_keyword);
+            json.key("claim_keyword"); json.value(match.claim_keyword);
+            json.key("similarity"); json.value(match.similarity);
+            json.endObject();
+        }
+        json.endArray();
+    }
     json.key("event_day"); writeOptional(json, evidence.event_day);
     json.key("nli_label"); json.value(nliLabelName(evidence.nli_label));
     json.key("nli_confidence"); json.value(evidence.nli_confidence);

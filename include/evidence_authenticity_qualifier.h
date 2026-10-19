@@ -7,6 +7,8 @@
 #define EVIDENCE_AUTHENTICITY_QUALIFIER_TIME_DECAY_PER_DAY 0.01
 #define EVIDENCE_AUTHENTICITY_QUALIFIER_SUFFICIENCY_GAMMA 0.50
 #define EVIDENCE_AUTHENTICITY_QUALIFIER_REFERENCE_CLUSTER_COUNT 3.0
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_KEYWORD_SIMILARITY_ZERO_BOUND 0.60
+#define EVIDENCE_AUTHENTICITY_QUALIFIER_KEYWORD_SIMILARITY_IDENTITY_BOUND 0.80
 
 #define EVIDENCE_AUTHENTICITY_QUALIFIER_OFFICIAL_REGISTRY 0.90
 #define EVIDENCE_AUTHENTICITY_QUALIFIER_ACADEMIC 0.88
@@ -24,6 +26,12 @@ struct EvidenceAuthenticityConfig {
     double sufficiency_gamma{EVIDENCE_AUTHENTICITY_QUALIFIER_SUFFICIENCY_GAMMA};
     double reference_cluster_count{
         EVIDENCE_AUTHENTICITY_QUALIFIER_REFERENCE_CLUSTER_COUNT};
+    // 低于 zero_bound 的相似度计0；从 zero_bound 到 identity_bound 线性过渡；
+    // 达到 identity_bound 后保留 Agent 给出的原始相似度。
+    double keyword_similarity_zero_bound{
+        EVIDENCE_AUTHENTICITY_QUALIFIER_KEYWORD_SIMILARITY_ZERO_BOUND};
+    double keyword_similarity_identity_bound{
+        EVIDENCE_AUTHENTICITY_QUALIFIER_KEYWORD_SIMILARITY_IDENTITY_BOUND};
     std::unordered_map<SourceType, double> source_baselines;
 
     EvidenceAuthenticityConfig();

@@ -81,6 +81,18 @@ enum class CredibilityLabel {
 };
 
 /**
+ * 预处理 Agent 为一组证据关键词和声明关键词给出的方向敏感可替换相似度。
+ *
+ * similarity 只衡量两个短语在当前事实语境中能否保持方向不变地替换，
+ * 不表示证据支持或反驳声明；证据方向仍由 Evidence::nli_label 表示。
+ */
+struct KeywordMatch {
+    std::string evidence_keyword;
+    std::string claim_keyword;
+    double similarity{0.0};
+};
+
+/**
  * 一条与原子声明相关的证据。
  *
  * event_day 使用调用方自选纪元的“整日序号”；只要声明和证据使用相同纪元即可。
@@ -92,6 +104,8 @@ struct Evidence {
     // 未填写来源时保持 nullopt，不能默认成某个真实来源类型，否则会错误获得其基线分。
     std::optional<SourceType> source_type;
     std::unordered_set<std::string> keywords;
+    // 允许缺省以兼容旧输入；缺省时第一层仍执行完全字符串匹配。
+    std::vector<KeywordMatch> keyword_matches;
     std::optional<std::int64_t> event_day;
     NliLabel nli_label{NliLabel::Neutral};
     double nli_confidence{0.0};

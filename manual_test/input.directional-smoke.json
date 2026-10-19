@@ -73,7 +73,19 @@
           "evidence_id": "D002",
           "original_source_id": "ORIGIN-002",
           "source_type": "news_media",
-          "keywords": ["学校", "关闭"],
+          "keywords": ["学校", "停办"],
+          "keyword_matches": [
+            {
+              "evidence_keyword": "学校",
+              "claim_keyword": "学校",
+              "similarity": 1.0
+            },
+            {
+              "evidence_keyword": "停办",
+              "claim_keyword": "关闭",
+              "similarity": 0.9
+            }
+          ],
           "event_day": 20744,
           "nli_label": "refute",
           "nli_confidence": 0.80

@@ -269,7 +269,7 @@ QualifierRequest
 ├─ domain
 ├─ event_time
 ├─ seven_elements
-├─ atomic_claims[2..5]
+├─ atomic_claims[]                 数量由事件复杂度决定，不设硬上限
 │  ├─ claim_id
 │  ├─ claim_text
 │  ├─ seven_elements
@@ -281,10 +281,16 @@ QualifierRequest
 │  ├─ event_day
 │  ├─ time_sensitive
 │  └─ evidence[]
-├─ logic_edges[1..4]
+│     ├─ keywords[]               原始证据关键词，不做规范词替换
+│     └─ keyword_matches[]        可选；每个证据关键词指向最相似声明关键词
+├─ logic_edges[]                   无适用关系时允许为空
 └─ jury_opinions[]                每条 claim 恰好一个分组
    └─ opinions[]                  可包含四个标准角色的独立意见
 ```
+
+第一层将 `keyword_matches[].similarity=x` 转为有效匹配值：`x<0.6` 取0，
+`0.6<=x<0.8` 取 `4x-2.4`，`x>=0.8` 保留原值；完全相同字符串直接取1。
+同一声明关键词只保留最高匹配值，再除以声明关键词数量得到证据相关度。
 
 完整字段约束和可直接联调的样例见 [算法层输入JSON结构.md](./算法层输入JSON结构.md)。
 

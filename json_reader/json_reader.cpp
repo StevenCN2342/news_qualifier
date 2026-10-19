@@ -615,6 +615,35 @@ Evidence parseEvidence(const JsonValue& value,
     }
     result.keywords = parseKeywords(required(object, "keywords", source, path),
                                     source, path + ".keywords");
+    if (const JsonValue* matches_value = optionalField(object, "keyword_matches")) {
+        const auto& matches = *asArray(*matches_value, source,
+                                       path + ".keyword_matches");
+        std::unordered_map<std::string, bool> matched_evidence_keywords;
+        for (std::size_t index = 0; index < matches.size(); ++index) {
+            const std::string match_path = path + ".keyword_matches[" +
+                                           std::to_string(index) + "]";
+            const auto& match_object = *asObject(matches[index], source, match_path);
+            KeywordMatch match;
+            match.evidence_keyword = asString(
+                required(match_object, "evidence_keyword", source, match_path),
+                source, match_path + ".evidence_keyword", false);
+            match.claim_keyword = asString(
+                required(match_object, "claim_keyword", source, match_path),
+                source, match_path + ".claim_keyword", false);
+            match.similarity = asProbability(
+                required(match_object, "similarity", source, match_path),
+                source, match_path + ".similarity");
+            if (!matched_evidence_keywords.emplace(match.evidence_keyword, true).second) {
+                fieldError(source, match_path + ".evidence_keyword",
+                           "each evidence keyword must have exactly one best match");
+            }
+            result.keyword_matches.push_back(std::move(match));
+        }
+        if (matched_evidence_keywords.size() != result.keywords.size()) {
+            fieldError(source, path + ".keyword_matches",
+                       "when present, it must cover every evidence keyword exactly once");
+        }
+    }
     const JsonValue event_day = required(object, "event_day", source, path);
     if (!std::holds_alternative<std::nullptr_t>(event_day.value)) {
         result.event_day = asInteger(event_day, source, path + ".event_day");
@@ -674,6 +703,20 @@ AtomicClaim parseClaim(const JsonValue& value,
     for (std::size_t index = 0; index < evidence.size(); ++index) {
         const std::string item_path = path + ".evidence[" + std::to_string(index) + "]";
         Evidence parsed = parseEvidence(evidence[index], source, item_path);
+        for (std::size_t match_index = 0;
+             match_index < parsed.keyword_matches.size(); ++match_index) {
+            const KeywordMatch& match = parsed.keyword_matches[match_index];
+            const std::string match_path = item_path + ".keyword_matches[" +
+                                           std::to_string(match_index) + "]";
+            if (parsed.keywords.count(match.evidence_keyword) == 0) {
+                fieldError(source, match_path + ".evidence_keyword",
+                           "must reference a keyword from this evidence");
+            }
+            if (result.keywords.count(match.claim_keyword) == 0) {
+                fieldError(source, match_path + ".claim_keyword",
+                           "must reference a keyword from the parent claim");
+            }
+        }
         if (!evidence_ids.emplace(parsed.id, true).second) {
             fieldError(source, item_path + ".evidence_id",
                        "duplicate evidence id within claim");
@@ -995,10 +1038,8 @@ QualifierRequest parseRequest(const JsonValue& root, const std::string& source) 
     const auto& claims = *asArray(
         required(object, "atomic_claims", source, "$"), source,
         "$.atomic_claims");
-    if (claims.size() < 2 || claims.size() > 5) {
-        fieldError(source, "$.atomic_claims",
-                   "the splitting rule requires 2 to 5 claims");
-    }
+    // 声明数量由新闻事实复杂度决定。解析层不再把常见的 2～5 条经验范围
+    // 当成协议硬约束；它仍逐条执行字段、ID 和引用一致性校验。
     // indices 同时完成声明 ID 唯一性检查，并供关系/陪审团分组解析使用。
     std::unordered_map<std::string, std::size_t> indices;
     for (std::size_t index = 0; index < claims.size(); ++index) {
@@ -1012,10 +1053,8 @@ QualifierRequest parseRequest(const JsonValue& root, const std::string& source) 
 
     const auto& edges = *asArray(
         required(object, "logic_edges", source, "$"), source, "$.logic_edges");
-    if (edges.empty() || edges.size() > 4) {
-        fieldError(source, "$.logic_edges",
-                   "the splitting rule requires 1 to 4 logic edges");
-    }
+    // 简单事件可以没有适用逻辑边，复杂事件也可能超过四条。关系数量不设
+    // 人为上下限，但每条边仍必须引用已存在且不同的声明，并满足维度规范。
     std::set<std::string> edge_ids;
     for (std::size_t index = 0; index < edges.size(); ++index) {
         const std::string path = "$.logic_edges[" + std::to_string(index) + "]";
